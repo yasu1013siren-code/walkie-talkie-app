@@ -1,0 +1,166 @@
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  background: linear-gradient(180deg, #1a1f2e 0%, #0d1017 100%);
+  color: #fff;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+
+.card h1 {
+  font-size: 28px;
+  margin-bottom: 4px;
+}
+
+.sub {
+  color: #8b93a7;
+  font-size: 14px;
+  margin-bottom: 28px;
+}
+
+input {
+  width: 100%;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  border: 1px solid #2a3142;
+  background: #171c28;
+  color: #fff;
+  font-size: 16px;
+  outline: none;
+}
+
+input:focus {
+  border-color: #4f7cff;
+}
+
+button {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#joinBtn {
+  width: 100%;
+  padding: 15px;
+  border-radius: 12px;
+  background: #4f7cff;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+#joinBtn:active {
+  background: #3d63d6;
+}
+
+.header {
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+#status {
+  color: #8b93a7;
+  font-size: 14px;
+}
+
+.participants {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin: 20px 0;
+  min-height: 40px;
+}
+
+.participant {
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: #171c28;
+  border: 1px solid #2a3142;
+  font-size: 14px;
+  color: #cdd3e0;
+  transition: all 0.15s;
+}
+
+.participant.talking {
+  background: #1f4d2e;
+  border-color: #34c759;
+  color: #34c759;
+  font-weight: 600;
+}
+
+.ptt-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.ptt-btn {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #3a4358, #1c2231);
+  border: 4px solid #2a3142;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  user-select: none;
+  transition: all 0.12s;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.ptt-btn.active {
+  background: radial-gradient(circle at 35% 30%, #ff5c5c, #c73030);
+  border-color: #ff5c5c;
+  transform: scale(0.96);
+  box-shadow: 0 4px 16px rgba(255,92,92,0.5);
+}
+
+.hint {
+  color: #6b7280;
+  font-size: 13px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.leave-btn {
+  position: absolute;
+  bottom: 24px;
+  padding: 10px 24px;
+  border-radius: 20px;
+  background: transparent;
+  border: 1px solid #3a4358;
+  color: #8b93a7;
+  font-size: 14px;
+}
