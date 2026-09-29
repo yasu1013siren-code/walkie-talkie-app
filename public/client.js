@@ -6,6 +6,8 @@ let audioElements = {}; // id -> <audio>
 let talking = false;
 let joined = false;
 let wakeLock = null;
+let lastHeadsetAction = 0;
+const headsetActions = ['play', 'pause', 'togglemicrophone', 'stop', 'hangup'];
 
 const roomInput = document.getElementById('roomInput');
 const nameInput = document.getElementById('nameInput');
@@ -19,6 +21,56 @@ const talkScreen = document.getElementById('talkScreen');
 const audioOutput = document.getElementById('audioOutput');
 const enableAudio = document.getElementById('enableAudio');
 const audioHelp = document.getElementById('audioHelp');
+const headsetStatus = document.getElementById('headsetStatus');
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  // The browser decides whether hardware buttons are delivered to this page.
+  navigator.mediaSession.playbackState = joined ? (talking ? 'playing' : 'paused') : 'none';
+  try { navigator.mediaSession.setMicrophoneActive?.(joined && talking); } catch (_) { /* optional API */ }
+}
+
+function handleHeadsetAction(action) {
+  if (!joined || !localStream || !socket.connected) return;
+  const now = Date.now();
+  if (now - lastHeadsetAction < 350) return; // Some devices send two actions for one press.
+  lastHeadsetAction = now;
+  if (action === 'stop' || action === 'hangup') stopTalking();
+  else if (action === 'togglemicrophone') talking ? stopTalking() : startTalking();
+  else if (action === 'play') talking ? stopTalking() : startTalking();
+  else if (action === 'pause') stopTalking();
+  headsetStatus.textContent = `イヤホン操作を検出: ${talking ? '送信中（もう一度押すと停止）' : '待機中'}`;
+}
+
+function registerHeadsetControls() {
+  if (!('mediaSession' in navigator)) {
+    headsetStatus.textContent = 'このブラウザはイヤホンボタン操作に対応していません。';
+    return;
+  }
+  if ('MediaMetadata' in window) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: 'スタッフインカム', artist: `ルーム ${roomInput.value.trim()}` });
+  }
+  let supported = 0;
+  for (const action of headsetActions) {
+    try {
+      navigator.mediaSession.setActionHandler(action, () => handleHeadsetAction(action));
+      supported++;
+    } catch (_) { /* Action unsupported on this browser. */ }
+  }
+  headsetStatus.textContent = supported
+    ? 'イヤホンの再生/停止ボタン: 1回で送信開始、もう1回で停止（端末によっては非対応）'
+    : 'このブラウザはイヤホンボタン操作に対応していません。';
+  updateMediaSession();
+}
+
+function clearHeadsetControls() {
+  if (!('mediaSession' in navigator)) return;
+  for (const action of headsetActions) {
+    try { navigator.mediaSession.setActionHandler(action, null); } catch (_) { /* optional action */ }
+  }
+  navigator.mediaSession.metadata = null;
+  updateMediaSession();
+}
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.warn);
 
@@ -93,6 +145,7 @@ joinBtn.addEventListener('click', async () => {
   }
 
   joined = true;
+  registerHeadsetControls();
   await refreshAudioOutputs().catch(console.warn);
   requestWakeLock();
 
@@ -106,6 +159,7 @@ joinBtn.addEventListener('click', async () => {
 leaveBtn.addEventListener('click', () => {
   stopTalking();
   joined = false;
+  clearHeadsetControls();
   wakeLock?.release().catch(() => {});
   Object.values(peers).forEach(({ pc }) => pc.close());
   Object.values(audioElements).forEach(audio => audio.remove());
@@ -120,6 +174,7 @@ leaveBtn.addEventListener('click', () => {
 
 socket.on('disconnect', () => {
   stopTalking();
+  headsetStatus.textContent = '通信が切れました。イヤホンボタンで送信できません。';
   if (joined) {
     Object.values(peers).forEach(({ pc }) => pc.close());
     Object.values(audioElements).forEach(audio => audio.remove());
@@ -131,6 +186,7 @@ socket.on('disconnect', () => {
 });
 socket.on('connect', () => {
   if (joined) socket.emit('join-room', { roomId: roomInput.value.trim(), name: nameInput.value.trim() });
+  if (joined) registerHeadsetControls();
 });
 
 socket.on('existing-users', async (users) => {
@@ -251,13 +307,15 @@ function updateStatusCount() {
 }
 
 function startTalking() {
-  if (!localStream || talking) return;
+  if (!joined || !socket.connected || !localStream || talking) return;
   talking = true;
   localStream.getAudioTracks().forEach(track => (track.enabled = true));
   pttBtn.classList.add('active');
   pttBtn.textContent = '🔴 送信中...';
   if (navigator.vibrate) navigator.vibrate(30);
   socket.emit('talking', true);
+  updateMediaSession();
+  headsetStatus.textContent = '送信中。停止するにはイヤホンボタンをもう一度押すか、画面のボタンを押してください。';
 }
 
 function stopTalking() {
@@ -267,6 +325,8 @@ function stopTalking() {
   pttBtn.classList.remove('active');
   pttBtn.textContent = '押しながら話す';
   socket.emit('talking', false);
+  updateMediaSession();
+  headsetStatus.textContent = '待機中。イヤホンボタンで送信を開始できます（対応端末のみ）。';
 }
 
 pttBtn.addEventListener('pointerdown', (e) => {
