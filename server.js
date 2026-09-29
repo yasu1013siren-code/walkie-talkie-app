@@ -17,7 +17,19 @@ const rooms = {};
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join-room', ({ roomId, name }) => {
+  function leaveRoom() {
+    if (!currentRoom || !rooms[currentRoom]) return;
+    delete rooms[currentRoom][socket.id];
+    socket.to(currentRoom).emit('user-left', { id: socket.id });
+    socket.leave(currentRoom);
+    if (Object.keys(rooms[currentRoom]).length === 0) delete rooms[currentRoom];
+    currentRoom = null;
+  }
+
+  socket.on('join-room', ({ roomId, name } = {}) => {
+    if (typeof roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(roomId)) return;
+    if (typeof name !== 'string' || name.length > 40) name = '';
+    leaveRoom();
     currentRoom = roomId;
     const userName = (name || '').trim() || `ゲスト${socket.id.slice(0, 4)}`;
 
@@ -34,8 +46,11 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user-joined', { id: socket.id, name: userName });
   });
 
+  socket.on('leave-room', leaveRoom);
+
   // WebRTCのオファー/アンサー/ICE candidateを中継するだけ(音声データ自体は通らない)
-  socket.on('signal', ({ to, data }) => {
+  socket.on('signal', ({ to, data } = {}) => {
+    if (!currentRoom || !rooms[currentRoom]?.[socket.id] || !rooms[currentRoom]?.[to]) return;
     io.to(to).emit('signal', { from: socket.id, data });
   });
 
@@ -46,15 +61,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    if (currentRoom && rooms[currentRoom]) {
-      delete rooms[currentRoom][socket.id];
-      socket.to(currentRoom).emit('user-left', { id: socket.id });
-      if (Object.keys(rooms[currentRoom]).length === 0) {
-        delete rooms[currentRoom];
-      }
-    }
-  });
+  socket.on('disconnecting', leaveRoom);
 });
 
 const PORT = process.env.PORT || 3000;

@@ -3,8 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a1f2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>インカム</title>
 <link rel="stylesheet" href="style.css">
+<link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
 
@@ -24,6 +28,13 @@
   </div>
 
   <div id="participants" class="participants"></div>
+
+  <div class="audio-controls">
+    <label for="audioOutput">音声の出力先</label>
+    <select id="audioOutput" aria-label="音声の出力先"><option value="">端末の設定に従う</option></select>
+    <button id="enableAudio" type="button">音声を再生する</button>
+    <p id="audioHelp" class="audio-help" role="status">Bluetoothイヤホンは先にスマホへ接続してください。</p>
+  </div>
 
   <div class="ptt-wrap">
     <button id="pttBtn" class="ptt-btn">押しながら話す</button>
