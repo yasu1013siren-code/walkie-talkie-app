@@ -28,6 +28,7 @@ public final class MainActivity extends Activity {
     private boolean joined;
     private boolean talking;
     private boolean foreground;
+    private boolean pageLoaded;
     private long lastButtonTime;
 
     @Override public void onCreate(Bundle state) {
@@ -77,6 +78,7 @@ public final class MainActivity extends Activity {
                         origin.getPort() != -1 ||
                         !java.util.Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
                         request.deny();
+                        Toast.makeText(MainActivity.this, "Web画面のマイク要求を許可できませんでした。アプリを再起動してください。", Toast.LENGTH_LONG).show();
                         return;
                     }
                     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -93,6 +95,16 @@ public final class MainActivity extends Activity {
             }
         });
         setContentView(webView);
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            loadWebApp();
+        } else {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION);
+        }
+    }
+
+    private void loadWebApp() {
+        if (pageLoaded) return;
+        pageLoaded = true;
         webView.loadUrl(SITE + "/");
     }
 
@@ -130,14 +142,17 @@ public final class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != AUDIO_PERMISSION || pendingAudioRequest == null) return;
-        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-        } else {
-            pendingAudioRequest.deny();
+        if (requestCode != AUDIO_PERMISSION) return;
+        boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
+        if (pendingAudioRequest != null) {
+            if (granted) pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            else pendingAudioRequest.deny();
+            pendingAudioRequest = null;
+        }
+        if (!granted) {
             Toast.makeText(this, "マイクを許可してください。拒否した場合は端末の設定 → アプリ → スタッフインカム → 権限から変更できます。", Toast.LENGTH_LONG).show();
         }
-        pendingAudioRequest = null;
+        loadWebApp();
     }
 
     @Override protected void onStop() {
