@@ -51,6 +51,10 @@ function handleHeadsetAction(action) {
 }
 
 function registerHeadsetControls() {
+  if (window.IntercomNative) {
+    headsetStatus.textContent = 'Androidアプリでイヤホンボタンを待機中。押すと送信開始、もう一度押すと停止します（対応機種のみ）。';
+    return;
+  }
   if (!('mediaSession' in navigator)) {
     headsetStatus.textContent = 'このブラウザはイヤホンボタン操作に対応していません。';
     return;
@@ -101,7 +105,7 @@ async function refreshAudioOutputs() {
   if ([...audioOutput.options].some(o => o.value === previous)) audioOutput.value = previous;
   audioOutput.disabled = !HTMLMediaElement.prototype.setSinkId;
   audioHelp.textContent = audioOutput.disabled
-    ? 'このブラウザは出力先の切替に非対応です。Bluetoothイヤホンをスマホの設定で接続・選択してください。'
+    ? '音声の出力先はスマホの設定でBluetoothイヤホンを接続・選択してください。'
     : 'Bluetoothイヤホンをスマホに接続してから選んでください。';
 }
 
