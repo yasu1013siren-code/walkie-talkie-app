@@ -23,6 +23,14 @@ const enableAudio = document.getElementById('enableAudio');
 const audioHelp = document.getElementById('audioHelp');
 const headsetStatus = document.getElementById('headsetStatus');
 
+function notifyNativeJoined() {
+  window.IntercomNative?.setJoined(joined && socket.connected);
+}
+
+// Called by the Android wrapper when its MediaSession receives a headset button.
+window.intercomNativeToggle = () => handleHeadsetAction('togglemicrophone');
+window.intercomNativeStop = () => stopTalking();
+
 function updateMediaSession() {
   if (!('mediaSession' in navigator)) return;
   // The browser decides whether hardware buttons are delivered to this page.
@@ -145,6 +153,7 @@ joinBtn.addEventListener('click', async () => {
   }
 
   joined = true;
+  notifyNativeJoined();
   registerHeadsetControls();
   await refreshAudioOutputs().catch(console.warn);
   requestWakeLock();
@@ -159,6 +168,7 @@ joinBtn.addEventListener('click', async () => {
 leaveBtn.addEventListener('click', () => {
   stopTalking();
   joined = false;
+  notifyNativeJoined();
   clearHeadsetControls();
   wakeLock?.release().catch(() => {});
   Object.values(peers).forEach(({ pc }) => pc.close());
@@ -174,6 +184,7 @@ leaveBtn.addEventListener('click', () => {
 
 socket.on('disconnect', () => {
   stopTalking();
+  notifyNativeJoined();
   headsetStatus.textContent = '通信が切れました。イヤホンボタンで送信できません。';
   if (joined) {
     Object.values(peers).forEach(({ pc }) => pc.close());
@@ -187,6 +198,7 @@ socket.on('disconnect', () => {
 socket.on('connect', () => {
   if (joined) socket.emit('join-room', { roomId: roomInput.value.trim(), name: nameInput.value.trim() });
   if (joined) registerHeadsetControls();
+  notifyNativeJoined();
 });
 
 socket.on('existing-users', async (users) => {
@@ -314,6 +326,7 @@ function startTalking() {
   pttBtn.textContent = '🔴 送信中...';
   if (navigator.vibrate) navigator.vibrate(30);
   socket.emit('talking', true);
+  window.IntercomNative?.setTalking(true);
   updateMediaSession();
   headsetStatus.textContent = '送信中。停止するにはイヤホンボタンをもう一度押すか、画面のボタンを押してください。';
 }
@@ -325,6 +338,7 @@ function stopTalking() {
   pttBtn.classList.remove('active');
   pttBtn.textContent = '押しながら話す';
   socket.emit('talking', false);
+  window.IntercomNative?.setTalking(false);
   updateMediaSession();
   headsetStatus.textContent = '待機中。イヤホンボタンで送信を開始できます（対応端末のみ）。';
 }
