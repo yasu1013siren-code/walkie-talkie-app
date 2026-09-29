@@ -6,7 +6,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -14,6 +16,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.widget.Toast;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -29,6 +32,7 @@ public final class MainActivity extends Activity {
     private MediaSession mediaSession;
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
+    private AudioTrack controlPlayback;
     private boolean hasAudioFocus;
     private PermissionRequest pendingAudioRequest;
     private boolean joined;
@@ -175,10 +179,50 @@ public final class MainActivity extends Activity {
             audioManager.abandonAudioFocusRequest(audioFocusRequest);
             hasAudioFocus = false;
         }
+        if (active && hasAudioFocus) startControlPlayback();
+        else stopControlPlayback();
         mediaSession.setPlaybackState(new PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_STOP)
             .setState(active ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_STOPPED, 0, 1f).build());
         mediaSession.setActive(active);
+    }
+
+    private void startControlPlayback() {
+        if (controlPlayback != null) return;
+        final int sampleRate = 16000;
+        AudioTrack track = null;
+        try {
+            track = new AudioTrack.Builder()
+                .setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAudioFormat(new AudioFormat.Builder()
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(sampleRate * 2)
+                .build();
+            if (track.getState() != AudioTrack.STATE_INITIALIZED ||
+                track.write(new short[sampleRate], 0, sampleRate) != sampleRate ||
+                track.setLoopPoints(0, sampleRate, -1) != AudioTrack.SUCCESS) {
+                track.release();
+                return;
+            }
+            track.setVolume(0f);
+            track.play();
+            controlPlayback = track;
+        } catch (RuntimeException e) {
+            if (track != null) track.release();
+            Log.w("StaffIntercom", "Could not start media control playback", e);
+        }
+    }
+
+    private void stopControlPlayback() {
+        if (controlPlayback == null) return;
+        controlPlayback.stop();
+        controlPlayback.release();
+        controlPlayback = null;
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
@@ -217,6 +261,7 @@ public final class MainActivity extends Activity {
         joined = false;
         if (pendingAudioRequest != null) pendingAudioRequest.deny();
         mediaSession.setActive(false);
+        stopControlPlayback();
         if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest);
         mediaSession.release();
         if (webView != null) { webView.destroy(); webView = null; }
