@@ -91,7 +91,7 @@ public final class MainActivity extends Activity {
     }
 
     private static boolean isToggleKey(int code) {
-        return code == KeyEvent.KEYCODE_HEADSETOOK || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+        return code == KeyEvent.KEYCODE_HEADSETHOOK || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
             code == KeyEvent.KEYCODE_MEDIA_PLAY || code == KeyEvent.KEYCODE_MEDIA_PAUSE;
     }
 
