@@ -4,6 +4,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -24,6 +27,9 @@ public final class MainActivity extends Activity {
     private static final Uri SITE_URI = Uri.parse(SITE);
     private WebView webView;
     private MediaSession mediaSession;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
+    private boolean hasAudioFocus;
     private PermissionRequest pendingAudioRequest;
     private boolean joined;
     private boolean talking;
@@ -34,6 +40,15 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setOnAudioFocusChangeListener(change -> {
+                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+                    stopFromHeadset();
+            }).build();
         mediaSession = new MediaSession(this, "StaffIntercom");
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override public boolean onMediaButtonEvent(Intent intent) {
@@ -43,7 +58,8 @@ public final class MainActivity extends Activity {
                 return true;
             }
             @Override public void onPlay() { toggleFromHeadset(); }
-            @Override public void onPause() { stopFromHeadset(); }
+            @Override public void onPause() { toggleFromHeadset(); }
+            @Override public void onStop() { toggleFromHeadset(); }
         });
         mediaSession.setMetadata(new MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, "スタッフインカム").build());
@@ -120,7 +136,16 @@ public final class MainActivity extends Activity {
 
     private static boolean isToggleKey(int code) {
         return code == KeyEvent.KEYCODE_HEADSETHOOK || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
-            code == KeyEvent.KEYCODE_MEDIA_PLAY || code == KeyEvent.KEYCODE_MEDIA_PAUSE;
+            code == KeyEvent.KEYCODE_MEDIA_PLAY || code == KeyEvent.KEYCODE_MEDIA_PAUSE ||
+            code == KeyEvent.KEYCODE_MEDIA_STOP;
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (joined && isToggleKey(event.getKeyCode())) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) toggleFromHeadset();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void toggleFromHeadset() {
@@ -144,8 +169,14 @@ public final class MainActivity extends Activity {
     private void updateSession() {
         if (mediaSession == null) return;
         boolean active = joined && foreground && webView != null;
+        if (active && !hasAudioFocus) {
+            hasAudioFocus = audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } else if (!active && hasAudioFocus) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            hasAudioFocus = false;
+        }
         mediaSession.setPlaybackState(new PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE)
+            .setActions(PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_STOP)
             .setState(active ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_STOPPED, 0, 1f).build());
         mediaSession.setActive(active);
     }
@@ -186,6 +217,7 @@ public final class MainActivity extends Activity {
         joined = false;
         if (pendingAudioRequest != null) pendingAudioRequest.deny();
         mediaSession.setActive(false);
+        if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest);
         mediaSession.release();
         if (webView != null) { webView.destroy(); webView = null; }
         super.onDestroy();
