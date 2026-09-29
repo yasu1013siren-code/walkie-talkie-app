@@ -148,7 +148,9 @@ joinBtn.addEventListener('click', async () => {
     // 初期状態はミュート(PTTボタンを押した時だけ送信)
     localStream.getAudioTracks().forEach(track => (track.enabled = false));
   } catch (err) {
-    alert('マイクへのアクセスが許可されませんでした。ブラウザの設定を確認してください。\n(' + err.message + ')');
+    const nativeDetails = window.IntercomNative?.getMicrophoneDiagnostics?.();
+    alert('マイクへのアクセスが許可されませんでした。\n(' + err.message + ')' +
+      (nativeDetails ? '\n診断: ' + nativeDetails : '\nブラウザの設定を確認してください。'));
     return;
   }
 

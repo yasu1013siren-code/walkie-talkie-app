@@ -30,6 +30,7 @@ public final class MainActivity extends Activity {
     private boolean foreground;
     private boolean pageLoaded;
     private long lastButtonTime;
+    private volatile String microphoneEvent = "WebViewのマイク要求は未受信";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -63,6 +64,10 @@ public final class MainActivity extends Activity {
             @JavascriptInterface public void setTalking(boolean value) {
                 runOnUiThread(() -> { talking = joined && value; updateSession(); });
             }
+            @JavascriptInterface public String getMicrophoneDiagnostics() {
+                return "Android権限=" + (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED ? "許可" : "拒否") +
+                    " / " + microphoneEvent;
+            }
         }, "IntercomNative");
         webView.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -73,17 +78,21 @@ public final class MainActivity extends Activity {
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
                     Uri origin = request.getOrigin();
+                    microphoneEvent = "WebView要求あり: " + origin;
                     if (!SITE_URI.getScheme().equals(origin.getScheme()) ||
                         !SITE_URI.getHost().equals(origin.getHost()) ||
-                        origin.getPort() != -1 ||
+                        (origin.getPort() != -1 && origin.getPort() != 443) ||
                         !java.util.Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                        microphoneEvent = "WebView拒否: origin=" + origin + " resources=" + java.util.Arrays.toString(request.getResources());
                         request.deny();
                         Toast.makeText(MainActivity.this, "Web画面のマイク要求を許可できませんでした。アプリを再起動してください。", Toast.LENGTH_LONG).show();
                         return;
                     }
                     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        microphoneEvent = "WebViewマイク許可済み: " + origin;
                         request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
                     } else {
+                        microphoneEvent = "Android権限を要求中";
                         if (pendingAudioRequest != null) pendingAudioRequest.deny();
                         pendingAudioRequest = request;
                         requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION);
@@ -91,6 +100,7 @@ public final class MainActivity extends Activity {
                 });
             }
             @Override public void onPermissionRequestCanceled(PermissionRequest request) {
+                microphoneEvent = "WebView要求が取り消されました";
                 if (pendingAudioRequest == request) pendingAudioRequest = null;
             }
         });
@@ -144,8 +154,12 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode != AUDIO_PERMISSION) return;
         boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
+        microphoneEvent = granted ? "Android権限を許可" : "Android権限を拒否";
         if (pendingAudioRequest != null) {
-            if (granted) pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            if (granted) {
+                pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                microphoneEvent = "WebViewマイク許可済み";
+            }
             else pendingAudioRequest.deny();
             pendingAudioRequest = null;
         }
