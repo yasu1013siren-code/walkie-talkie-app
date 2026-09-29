@@ -7,8 +7,10 @@ import android.content.pm.PackageManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.KeyEvent;
+import android.widget.Toast;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -19,6 +21,7 @@ import android.webkit.WebViewClient;
 public final class MainActivity extends Activity {
     private static final String SITE = "https://walkie-talkie-app-42l7.onrender.com";
     private static final int AUDIO_PERMISSION = 100;
+    private static final Uri SITE_URI = Uri.parse(SITE);
     private WebView webView;
     private MediaSession mediaSession;
     private PermissionRequest pendingAudioRequest;
@@ -68,15 +71,18 @@ public final class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
-                    if (!SITE.equals(request.getOrigin().toString()) ||
-                        request.getResources().length != 1 ||
-                        !PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(request.getResources()[0])) {
+                    Uri origin = request.getOrigin();
+                    if (!SITE_URI.getScheme().equals(origin.getScheme()) ||
+                        !SITE_URI.getHost().equals(origin.getHost()) ||
+                        origin.getPort() != -1 ||
+                        !java.util.Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
                         request.deny();
                         return;
                     }
                     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                         request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
                     } else {
+                        if (pendingAudioRequest != null) pendingAudioRequest.deny();
                         pendingAudioRequest = request;
                         requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION);
                     }
@@ -127,7 +133,10 @@ public final class MainActivity extends Activity {
         if (requestCode != AUDIO_PERMISSION || pendingAudioRequest == null) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
             pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-        } else pendingAudioRequest.deny();
+        } else {
+            pendingAudioRequest.deny();
+            Toast.makeText(this, "マイクを許可してください。拒否した場合は端末の設定 → アプリ → スタッフインカム → 権限から変更できます。", Toast.LENGTH_LONG).show();
+        }
         pendingAudioRequest = null;
     }
 
