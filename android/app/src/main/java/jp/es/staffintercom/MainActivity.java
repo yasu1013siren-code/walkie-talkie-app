@@ -177,7 +177,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.10");
+        title.setText("イヤホン診断 v0.1.11");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -328,11 +328,17 @@ public final class MainActivity extends Activity {
     private void renderDiagnostics() {
         if (diagnosticView == null) return;
         StringBuilder text = new StringBuilder();
-        text.append("診断 v0.1.10 / Android ").append(Build.VERSION.RELEASE)
+        text.append("診断 v0.1.11 / Android ").append(Build.VERSION.RELEASE)
             .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
         text.append("通話テスト=").append(TestCallService.status)
             .append("\n外部応答=").append(TestCallService.answers)
             .append("件 / 外部切断・拒否=").append(TestCallService.disconnects).append("件\n");
+        text.append("通話状態=").append(TestCallService.callState())
+            .append(" / ミュート=").append(TestCallService.muted == null ? "未取得" : TestCallService.muted ? "ON" : "OFF")
+            .append("\nミュート通知=").append(TestCallService.muteCallbacks)
+            .append("件 / ミュート変更=").append(TestCallService.muteChanges).append("件（初期状態・重複通知を除く）")
+            .append("\n最終ミュート変更=").append(TestCallService.lastMuteChange)
+            .append("\n※ミュート通知の操作元は特定できません。S10だけを操作して比較してください。\n");
         text.append("ルーム=").append(joined ? "参加" : "未参加")
             .append(" / 画面=").append(foreground ? "表示中" : "非表示")
             .append(" / 送信=").append(talking ? "中" : "停止")
@@ -342,7 +348,7 @@ public final class MainActivity extends Activity {
             .append("\nキー受信=").append(keyEvents).append("件 / 音声操作受信=").append(mediaCommands).append("件")
             .append("\n").append(microphoneEvent);
         if (keyEvents == 0 && mediaCommands == 0)
-            text.append("\nこのアプリへのボタン信号は未受信（原因は未確定）");
+            text.append("\nメディアキー・音声操作は未受信（Telecomの応答・切断・ミュートは上記で別集計）");
         text.append("\n現在の音声設定\n").append(audioObservation)
             .append("\n比較: 参加前の最新観測\n").append(beforeJoin)
             .append("\n比較: 参加中の最新観測\n").append(duringJoin)
