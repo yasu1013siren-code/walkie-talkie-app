@@ -154,7 +154,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.6");
+        title.setText("イヤホン診断 v0.1.7");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -308,10 +308,23 @@ public final class MainActivity extends Activity {
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .setBufferSizeInBytes(sampleRate * 2)
                 .build();
-            if (track.getState() != AudioTrack.STATE_INITIALIZED ||
-                track.write(new short[sampleRate], 0, sampleRate) != sampleRate ||
-                track.setLoopPoints(0, sampleRate, -1) != AudioTrack.SUCCESS) {
-                playbackStatus = "初期化失敗";
+            // MODE_STATIC starts in STATE_NO_STATIC_DATA until PCM is written.
+            int initialState = track.getState();
+            if (initialState == AudioTrack.STATE_UNINITIALIZED) {
+                playbackStatus = "作成失敗: state=" + initialState;
+                track.release();
+                return;
+            }
+            int written = track.write(new short[sampleRate], 0, sampleRate);
+            int loadedState = track.getState();
+            if (written != sampleRate || loadedState != AudioTrack.STATE_INITIALIZED) {
+                playbackStatus = "書込失敗: write=" + written + " state=" + loadedState;
+                track.release();
+                return;
+            }
+            int loopResult = track.setLoopPoints(0, sampleRate, -1);
+            if (loopResult != AudioTrack.SUCCESS) {
+                playbackStatus = "ループ設定失敗: code=" + loopResult;
                 track.release();
                 return;
             }
