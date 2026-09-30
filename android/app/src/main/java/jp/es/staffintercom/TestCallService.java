@@ -87,10 +87,24 @@ public final class TestCallService extends ConnectionService {
             current.setDisconnected(new DisconnectCause(cause));
             current.destroy();
         }
-        if (appContext != null) appContext.getSystemService(NotificationManager.class).cancel(NOTIFICATION);
+        if (appContext != null) {
+            try { appContext.getSystemService(NotificationManager.class).cancel(NOTIFICATION); }
+            catch (RuntimeException error) { android.util.Log.w("IntercomTelecom", "Cancel notification", error); }
+        }
         log(origin);
     }
+    @Override public void onCreate() {
+        super.onCreate();
+        appContext = getApplicationContext();
+    }
     @Override public Connection onCreateIncomingConnection(PhoneAccountHandle account, ConnectionRequest request) {
+        try { return createIncoming(account, request); }
+        catch (RuntimeException error) {
+            finish("着信作成例外: " + error.getClass().getSimpleName() + " " + error.getMessage(), DisconnectCause.ERROR);
+            return Connection.createFailedConnection(new DisconnectCause(DisconnectCause.ERROR));
+        }
+    }
+    private Connection createIncoming(PhoneAccountHandle account, ConnectionRequest request) {
         if (!pending || connection != null) return Connection.createFailedConnection(new DisconnectCause(DisconnectCause.CANCELED));
         pending = false;
         TestConnection created = new TestConnection();
@@ -113,6 +127,13 @@ public final class TestCallService extends ConnectionService {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
     private static void notification(boolean ringing) {
+        try {
+            postNotification(ringing);
+        } catch (RuntimeException error) {
+            finish("通知失敗: " + error.getClass().getSimpleName() + " " + error.getMessage(), DisconnectCause.ERROR);
+        }
+    }
+    private static void postNotification(boolean ringing) {
         NotificationManager manager = appContext.getSystemService(NotificationManager.class);
         NotificationChannel channel = new NotificationChannel(CHANNEL, "インカム通話操作テスト", NotificationManager.IMPORTANCE_HIGH);
         channel.setSound(null, null);
@@ -125,14 +146,10 @@ public final class TestCallService extends ConnectionService {
             .setContentTitle("S10操作テスト")
             .setContentText(ringing ? "イヤホンボタンで応答を確認" : "イヤホンボタンで切断を確認（音声通話なし）")
             .setCategory(Notification.CATEGORY_CALL).setOngoing(true).setContentIntent(open);
-        if (Build.VERSION.SDK_INT >= 31) {
-            Person person = new Person.Builder().setName("S10操作テスト").build();
-            builder.setStyle(ringing ? Notification.CallStyle.forIncomingCall(person, action("end"), action("answer"))
-                : Notification.CallStyle.forOngoingCall(person, action("end")));
-        } else {
-            if (ringing) builder.addAction(new Notification.Action.Builder(null, "応答", action("answer")).build());
-            builder.addAction(new Notification.Action.Builder(null, "終了", action("end")).build());
-        }
+        // The test has no foreground audio service. Use a regular actionable notification
+        // rather than CallStyle, which may be rejected by NotificationManager.
+        if (ringing) builder.addAction(new Notification.Action.Builder(null, "応答", action("answer")).build());
+        builder.addAction(new Notification.Action.Builder(null, "終了", action("end")).build());
         manager.notify(NOTIFICATION, builder.build());
     }
     private static final class TestConnection extends Connection {
@@ -161,10 +178,10 @@ public final class TestCallService extends ConnectionService {
         }
         @Override public void onAbort() { finish("Telecom中止コールバック受信", DisconnectCause.CANCELED); }
         @Override public void onCallAudioStateChanged(CallAudioState audio) {
-            log("通話音声状態: route=" + audio.getRoute() + " muted=" + audio.isMuted());
+            log(audio == null ? "通話音声状態: 未取得" : "通話音声状態: route=" + audio.getRoute() + " muted=" + audio.isMuted());
         }
         @Override public void onCallEndpointChanged(CallEndpoint endpoint) {
-            log("通話経路: " + endpoint.getEndpointName() + " type=" + endpoint.getEndpointType());
+            log(endpoint == null ? "通話経路: 未取得" : "通話経路: " + endpoint.getEndpointName() + " type=" + endpoint.getEndpointType());
         }
     }
     public static final class TestCallReceiver extends BroadcastReceiver {
