@@ -75,6 +75,16 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        final android.content.SharedPreferences crashPrefs = getSharedPreferences("intercom-crash", MODE_PRIVATE);
+        final Thread.UncaughtExceptionHandler previousHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            String report = android.util.Log.getStackTraceString(error);
+            crashPrefs.edit().putString("lastCrash", report.substring(0, Math.min(report.length(), 3000))).commit();
+            if (previousHandler != null) previousHandler.uncaughtException(thread, error);
+            else android.os.Process.killProcess(android.os.Process.myPid());
+        });
+        String lastCrash = crashPrefs.getString("lastCrash", "");
+        if (!lastCrash.isEmpty()) recordDiagnostic("前回の終了原因: " + lastCrash);
         TestCallService.setListener(this::recordDiagnostic);
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -167,7 +177,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.9");
+        title.setText("イヤホン診断 v0.1.10");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -318,7 +328,7 @@ public final class MainActivity extends Activity {
     private void renderDiagnostics() {
         if (diagnosticView == null) return;
         StringBuilder text = new StringBuilder();
-        text.append("診断 v0.1.9 / Android ").append(Build.VERSION.RELEASE)
+        text.append("診断 v0.1.10 / Android ").append(Build.VERSION.RELEASE)
             .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
         text.append("通話テスト=").append(TestCallService.status)
             .append("\n外部応答=").append(TestCallService.answers)
