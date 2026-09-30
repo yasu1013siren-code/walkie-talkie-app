@@ -7,6 +7,9 @@ import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
+import android.media.AudioDeviceInfo;
+import android.media.AudioRecordingConfiguration;
+import android.os.Build;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.MediaMetadata;
@@ -40,12 +43,18 @@ public final class MainActivity extends Activity {
     private TextView diagnosticView;
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private final ArrayDeque<String> diagnosticEvents = new ArrayDeque<>();
+    private String audioObservation = "未観測";
+    private String beforeJoin = "未観測";
+    private String duringJoin = "未観測";
+    private String afterLeave = "未観測";
+    private boolean hasJoinedOnce;
     private int keyEvents;
     private int mediaCommands;
     private String focusStatus = "未要求";
     private String playbackStatus = "停止";
     private final Runnable diagnosticRefresh = new Runnable() {
         @Override public void run() {
+            sampleAudioState();
             renderDiagnostics();
             diagnosticHandler.postDelayed(this, 1000);
         }
@@ -101,6 +110,7 @@ public final class MainActivity extends Activity {
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface public void setJoined(boolean value) {
                 runOnUiThread(() -> {
+                    if (value && !joined) hasJoinedOnce = true;
                     joined = value;
                     if (!joined) talking = false;
                     updateSession();
@@ -154,7 +164,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.7");
+        title.setText("イヤホン診断 v0.1.8");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -213,7 +223,7 @@ public final class MainActivity extends Activity {
     private void recordKey(String source, KeyEvent event) {
         runOnUiThread(() -> {
             keyEvents++;
-            recordDiagnostic(source + " " + KeyEvent.keyCodeToString(event.getKeyCode()) +
+            recordDiagnostic((joined ? "参加中 " : "未参加 ") + source + " " + KeyEvent.keyCodeToString(event.getKeyCode()) +
                 "(" + event.getKeyCode() + ") " + (event.getAction() == KeyEvent.ACTION_DOWN ? "押下" : event.getAction() == KeyEvent.ACTION_UP ? "解放" : "複数入力") +
                 " repeat=" + event.getRepeatCount());
         });
@@ -224,9 +234,66 @@ public final class MainActivity extends Activity {
         recordDiagnostic("音声操作受信: " + command);
     }
 
+    private static String deviceDescription(AudioDeviceInfo device) {
+        if (device == null) return "未取得";
+        String type;
+        switch (device.getType()) {
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO: type = "Bluetooth通話(SCO)"; break;
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: type = "Bluetooth音楽(A2DP)"; break;
+            case AudioDeviceInfo.TYPE_BUILTIN_MIC: type = "本体マイク"; break;
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER: type = "本体スピーカー"; break;
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE: type = "本体受話口"; break;
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET: type = "有線ヘッドセット"; break;
+            case AudioDeviceInfo.TYPE_USB_HEADSET: type = "USBヘッドセット"; break;
+            case AudioDeviceInfo.TYPE_BLE_HEADSET: type = "Bluetooth LEヘッドセット"; break;
+            default: type = "type=" + device.getType();
+        }
+        return type + " [" + device.getProductName() + "]";
+    }
+
+    private void sampleAudioState() {
+        if (audioManager == null) return;
+        StringBuilder state = new StringBuilder();
+        int mode = audioManager.getMode();
+        String modeName = mode == AudioManager.MODE_NORMAL ? "通常" :
+            mode == AudioManager.MODE_IN_COMMUNICATION ? "通話用" :
+            mode == AudioManager.MODE_IN_CALL ? "電話通話" :
+            mode == AudioManager.MODE_RINGTONE ? "着信" : "その他";
+        state.append("音声モード=").append(modeName).append("(").append(mode).append(")")
+            .append(" / SCO設定=").append(audioManager.isBluetoothScoOn() ? "ON" : "OFF");
+        if (Build.VERSION.SDK_INT >= 31) {
+            state.append("\nOSの通信デバイス=")
+                .append(deviceDescription(audioManager.getCommunicationDevice()));
+        } else {
+            state.append("\nOSの通信デバイス=Android 12未満のため取得対象外");
+        }
+        state.append("\n無音再生の実出力=")
+            .append(deviceDescription(controlPlayback == null ? null : controlPlayback.getRoutedDevice()));
+        state.append("\nOS報告の録音デバイス=");
+        try {
+            java.util.List<AudioRecordingConfiguration> configs = audioManager.getActiveRecordingConfigurations();
+            if (configs.isEmpty()) state.append("なし / 取得できない状態");
+            for (int i = 0; i < configs.size(); i++) {
+                if (i > 0) state.append(", ");
+                state.append(deviceDescription(configs.get(i).getAudioDevice()));
+            }
+        } catch (RuntimeException error) {
+            state.append("取得不可: ").append(error.getClass().getSimpleName());
+        }
+        audioObservation = state.toString();
+        String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN)
+            .format(new java.util.Date());
+        String snapshot = time + " キー=" + keyEvents + "件 / 音声操作=" + mediaCommands + "件\n" + audioObservation;
+        if (joined) duringJoin = snapshot;
+        else if (hasJoinedOnce) afterLeave = snapshot;
+        else beforeJoin = snapshot;
+    }
+
     private void renderDiagnostics() {
         if (diagnosticView == null) return;
         StringBuilder text = new StringBuilder();
+        text.append("診断 v0.1.8 / Android ").append(Build.VERSION.RELEASE)
+            .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
         text.append("ルーム=").append(joined ? "参加" : "未参加")
             .append(" / 画面=").append(foreground ? "表示中" : "非表示")
             .append(" / 送信=").append(talking ? "中" : "停止")
@@ -237,6 +304,11 @@ public final class MainActivity extends Activity {
             .append("\n").append(microphoneEvent);
         if (keyEvents == 0 && mediaCommands == 0)
             text.append("\nこのアプリへのボタン信号は未受信（原因は未確定）");
+        text.append("\n現在の音声設定\n").append(audioObservation)
+            .append("\n比較: 参加前の最新観測\n").append(beforeJoin)
+            .append("\n比較: 参加中の最新観測\n").append(duringJoin)
+            .append("\n比較: 退出後の最新観測\n").append(afterLeave)
+            .append("\n※OS報告の録音デバイスは取得可能な構成です。WebViewのマイク経路を確定する表示ではありません。");
         for (String event : diagnosticEvents) text.append("\n").append(event);
         diagnosticView.setText(text.toString());
     }
@@ -380,7 +452,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        diagnosticHandler.removeCallbacks(diagnosticRefresh);
+        diagnosticHandler.removeCallbacksAndMessages(null);
         joined = false;
         if (pendingAudioRequest != null) pendingAudioRequest.deny();
         mediaSession.setActive(false);
