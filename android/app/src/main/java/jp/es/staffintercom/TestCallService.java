@@ -4,13 +4,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Person;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,7 +35,30 @@ public final class TestCallService extends ConnectionService {
     static String status = "未開始";
     static int answers;
     static int disconnects;
-    private static final Runnable TIMEOUT = () -> finish("90秒のテスト終了", DisconnectCause.LOCAL);
+    static int muteCallbacks;
+    static int muteChanges;
+    static Boolean muted;
+    static String lastMuteChange = "未観測";
+    static String callState() {
+        if (pending) return "作成待ち";
+        if (connection == null) return "終了/未開始";
+        return Connection.stateToString(connection.getState());
+    }
+    private static void observeMute(boolean value, String source) {
+        muteCallbacks++;
+        Boolean previous = muted;
+        muted = value;
+        if (previous == null) {
+            log("ミュート初期状態=" + (value ? "ON" : "OFF") + " / " + source);
+        } else if (previous.booleanValue() != value) {
+            muteChanges++;
+            lastMuteChange = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN)
+                .format(new java.util.Date()) + " " + (value ? "ON" : "OFF") + " / " + source;
+            log("ミュート変更=" + (value ? "ON" : "OFF") + " / 通話状態=" + callState() +
+                " / " + source + "（操作元は特定できません）");
+        }
+    }
+    private static final Runnable TIMEOUT = () -> finish("180秒のテスト終了", DisconnectCause.LOCAL);
 
     static void setListener(Consumer<String> value) { listener = value; }
     private static void log(String event) {
@@ -47,6 +68,8 @@ public final class TestCallService extends ConnectionService {
     static boolean isTesting() { return pending || connection != null; }
     static void start(Context context) {
         if (isTesting()) { log("テスト着信は既に存在します"); return; }
+        answers = 0; disconnects = 0; muteCallbacks = 0; muteChanges = 0;
+        muted = null; lastMuteChange = "未観測";
         appContext = context.getApplicationContext();
         try {
             TelecomManager manager = context.getSystemService(TelecomManager.class);
@@ -63,7 +86,7 @@ public final class TestCallService extends ConnectionService {
             Bundle extras = new Bundle();
             extras.putParcelable(TelecomManager.EXTRA_INCOMING_CALL_ADDRESS, Uri.parse("sip:s10-test@intercom.invalid"));
             pending = true;
-            HANDLER.postDelayed(TIMEOUT, 90000);
+            HANDLER.postDelayed(TIMEOUT, 180000);
             log("着信登録要求 / Connection作成待ち");
             manager.addNewIncomingCall(handle, extras);
         } catch (RuntimeException error) {
@@ -110,6 +133,7 @@ public final class TestCallService extends ConnectionService {
         TestConnection created = new TestConnection();
         connection = created;
         created.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED);
+        created.setConnectionCapabilities(Connection.CAPABILITY_MUTE);
         created.setAudioModeIsVoip(true);
         created.setAddress(Uri.parse("sip:s10-test@intercom.invalid"), TelecomManager.PRESENTATION_ALLOWED);
         created.setCallerDisplayName("S10操作テスト", TelecomManager.PRESENTATION_ALLOWED);
@@ -144,7 +168,7 @@ public final class TestCallService extends ConnectionService {
         Notification.Builder builder = new Notification.Builder(appContext, CHANNEL)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
             .setContentTitle("S10操作テスト")
-            .setContentText(ringing ? "イヤホンボタンで応答を確認" : "イヤホンボタンで切断を確認（音声通話なし）")
+            .setContentText(ringing ? "イヤホンボタンで応答を確認" : "通話中のミュート操作を確認（音声通話なし）")
             .setCategory(Notification.CATEGORY_CALL).setOngoing(true).setContentIntent(open);
         // The test has no foreground audio service. Use a regular actionable notification
         // rather than CallStyle, which may be rejected by NotificationManager.
@@ -177,7 +201,11 @@ public final class TestCallService extends ConnectionService {
             finish("Telecom拒否コールバック受信（外部操作）", DisconnectCause.REJECTED);
         }
         @Override public void onAbort() { finish("Telecom中止コールバック受信", DisconnectCause.CANCELED); }
+        @Override public void onMuteStateChanged(boolean isMuted) {
+            observeMute(isMuted, "onMuteStateChanged");
+        }
         @Override public void onCallAudioStateChanged(CallAudioState audio) {
+            if (audio != null) observeMute(audio.isMuted(), "onCallAudioStateChanged");
             log(audio == null ? "通話音声状態: 未取得" : "通話音声状態: route=" + audio.getRoute() + " muted=" + audio.isMuted());
         }
         @Override public void onCallEndpointChanged(CallEndpoint endpoint) {
