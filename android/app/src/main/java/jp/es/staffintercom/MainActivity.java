@@ -177,7 +177,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.11");
+        title.setText("イヤホン診断 v0.1.12");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -193,6 +193,7 @@ public final class MainActivity extends Activity {
             diagnosticEvents.clear(); keyEvents = 0; mediaCommands = 0; renderDiagnostics();
         });
         actions.addView(clear);
+        actions.setVisibility(android.view.View.GONE);
         root.addView(actions);
         LinearLayout testActions = new LinearLayout(this);
         Button testIncoming = new Button(this);
@@ -216,6 +217,7 @@ public final class MainActivity extends Activity {
         testEnd.setText("テスト終了");
         testEnd.setOnClickListener(v -> TestCallService.finish("画面からテスト終了", android.telecom.DisconnectCause.LOCAL));
         testActions.addView(testEnd, new LinearLayout.LayoutParams(0, -2, 1f));
+        testActions.setVisibility(android.view.View.GONE);
         root.addView(testActions);
         ScrollView diagnosticScroll = new ScrollView(this);
         diagnosticView = new TextView(this);
@@ -225,6 +227,18 @@ public final class MainActivity extends Activity {
         diagnosticScroll.addView(diagnosticView);
         root.addView(diagnosticScroll, new LinearLayout.LayoutParams(-1,
             (int) (150 * getResources().getDisplayMetrics().density)));
+        diagnosticScroll.setVisibility(android.view.View.GONE);
+        Button diagnosticToggle = new Button(this);
+        diagnosticToggle.setText("診断を表示");
+        diagnosticToggle.setOnClickListener(v -> {
+            boolean show = diagnosticScroll.getVisibility() != android.view.View.VISIBLE;
+            int visibility = show ? android.view.View.VISIBLE : android.view.View.GONE;
+            actions.setVisibility(visibility);
+            testActions.setVisibility(visibility);
+            diagnosticScroll.setVisibility(visibility);
+            diagnosticToggle.setText(show ? "診断を閉じる" : "診断を表示");
+        });
+        root.addView(diagnosticToggle, new LinearLayout.LayoutParams(-1, -2));
         setContentView(root);
         diagnosticHandler.post(diagnosticRefresh);
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -328,7 +342,7 @@ public final class MainActivity extends Activity {
     private void renderDiagnostics() {
         if (diagnosticView == null) return;
         StringBuilder text = new StringBuilder();
-        text.append("診断 v0.1.11 / Android ").append(Build.VERSION.RELEASE)
+        text.append("診断 v0.1.12 / Android ").append(Build.VERSION.RELEASE)
             .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
         text.append("通話テスト=").append(TestCallService.status)
             .append("\n外部応答=").append(TestCallService.answers)
