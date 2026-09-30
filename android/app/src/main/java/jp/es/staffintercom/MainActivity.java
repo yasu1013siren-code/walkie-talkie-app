@@ -14,6 +14,15 @@ import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.ScrollView;
+import android.widget.Button;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import java.util.ArrayDeque;
 import android.view.KeyEvent;
 import android.widget.Toast;
 import android.util.Log;
@@ -28,6 +37,19 @@ public final class MainActivity extends Activity {
     private static final String SITE = "https://walkie-talkie-app-42l7.onrender.com";
     private static final int AUDIO_PERMISSION = 100;
     private static final Uri SITE_URI = Uri.parse(SITE);
+    private TextView diagnosticView;
+    private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
+    private final ArrayDeque<String> diagnosticEvents = new ArrayDeque<>();
+    private int keyEvents;
+    private int mediaCommands;
+    private String focusStatus = "未要求";
+    private String playbackStatus = "停止";
+    private final Runnable diagnosticRefresh = new Runnable() {
+        @Override public void run() {
+            renderDiagnostics();
+            diagnosticHandler.postDelayed(this, 1000);
+        }
+    };
     private WebView webView;
     private MediaSession mediaSession;
     private AudioManager audioManager;
@@ -50,6 +72,8 @@ public final class MainActivity extends Activity {
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setOnAudioFocusChangeListener(change -> {
+                focusStatus = "通知=" + change;
+                recordDiagnostic("音声フォーカス " + change);
                 if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
                     stopFromHeadset();
             }).build();
@@ -57,13 +81,14 @@ public final class MainActivity extends Activity {
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override public boolean onMediaButtonEvent(Intent intent) {
                 KeyEvent event = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                if (event != null) recordKey("MediaSession", event);
                 if (event == null || !isToggleKey(event.getKeyCode())) return super.onMediaButtonEvent(intent);
                 if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) toggleFromHeadset();
                 return true;
             }
-            @Override public void onPlay() { toggleFromHeadset(); }
-            @Override public void onPause() { toggleFromHeadset(); }
-            @Override public void onStop() { toggleFromHeadset(); }
+            @Override public void onPlay() { recordCommand("PLAY"); toggleFromHeadset(); }
+            @Override public void onPause() { recordCommand("PAUSE"); toggleFromHeadset(); }
+            @Override public void onStop() { recordCommand("STOP"); toggleFromHeadset(); }
         });
         mediaSession.setMetadata(new MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, "スタッフインカム").build());
@@ -124,7 +149,38 @@ public final class MainActivity extends Activity {
                 if (pendingAudioRequest == request) pendingAudioRequest = null;
             }
         });
-        setContentView(webView);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
+        LinearLayout actions = new LinearLayout(this);
+        TextView title = new TextView(this);
+        title.setText("イヤホン診断 v0.1.6");
+        actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button copy = new Button(this);
+        copy.setText("コピー");
+        copy.setOnClickListener(v -> {
+            ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(
+                ClipData.newPlainText("イヤホン診断", diagnosticView.getText()));
+            Toast.makeText(this, "診断をコピーしました", Toast.LENGTH_SHORT).show();
+        });
+        actions.addView(copy);
+        Button clear = new Button(this);
+        clear.setText("消去");
+        clear.setOnClickListener(v -> {
+            diagnosticEvents.clear(); keyEvents = 0; mediaCommands = 0; renderDiagnostics();
+        });
+        actions.addView(clear);
+        root.addView(actions);
+        ScrollView diagnosticScroll = new ScrollView(this);
+        diagnosticView = new TextView(this);
+        diagnosticView.setTextSize(12);
+        diagnosticView.setTextIsSelectable(true);
+        diagnosticView.setPadding(12, 4, 12, 8);
+        diagnosticScroll.addView(diagnosticView);
+        root.addView(diagnosticScroll, new LinearLayout.LayoutParams(-1,
+            (int) (150 * getResources().getDisplayMetrics().density)));
+        setContentView(root);
+        diagnosticHandler.post(diagnosticRefresh);
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             loadWebApp();
         } else {
@@ -144,7 +200,49 @@ public final class MainActivity extends Activity {
             code == KeyEvent.KEYCODE_MEDIA_STOP;
     }
 
+    private void recordDiagnostic(String message) {
+        runOnUiThread(() -> {
+            String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN)
+                .format(new java.util.Date());
+            diagnosticEvents.addFirst(time + " " + message);
+            while (diagnosticEvents.size() > 12) diagnosticEvents.removeLast();
+            renderDiagnostics();
+        });
+    }
+
+    private void recordKey(String source, KeyEvent event) {
+        runOnUiThread(() -> {
+            keyEvents++;
+            recordDiagnostic(source + " " + KeyEvent.keyCodeToString(event.getKeyCode()) +
+                "(" + event.getKeyCode() + ") " + KeyEvent.actionToString(event.getAction()) +
+                " repeat=" + event.getRepeatCount());
+        });
+    }
+
+    private void recordCommand(String command) {
+        mediaCommands++;
+        recordDiagnostic("音声操作受信: " + command);
+    }
+
+    private void renderDiagnostics() {
+        if (diagnosticView == null) return;
+        StringBuilder text = new StringBuilder();
+        text.append("ルーム=").append(joined ? "参加" : "未参加")
+            .append(" / 画面=").append(foreground ? "表示中" : "非表示")
+            .append(" / 送信=").append(talking ? "中" : "停止")
+            .append("\nMediaSession=").append(mediaSession != null && mediaSession.isActive() ? "有効" : "無効")
+            .append(" / フォーカス=").append(focusStatus)
+            .append("\n操作受付用の無音再生=").append(playbackStatus)
+            .append("\nキー受信=").append(keyEvents).append("件 / 音声操作受信=").append(mediaCommands).append("件")
+            .append("\n").append(microphoneEvent);
+        if (keyEvents == 0 && mediaCommands == 0)
+            text.append("\nこのアプリへのボタン信号は未受信（原因は未確定）");
+        for (String event : diagnosticEvents) text.append("\n").append(event);
+        diagnosticView.setText(text.toString());
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        recordKey("画面", event);
         if (joined && isToggleKey(event.getKeyCode())) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) toggleFromHeadset();
             return true;
@@ -154,11 +252,16 @@ public final class MainActivity extends Activity {
 
     private void toggleFromHeadset() {
         runOnUiThread(() -> {
-            if (!joined || webView == null) return;
+            if (!joined || webView == null) {
+                recordDiagnostic("切替を見送り: ルーム未参加"); return;
+            }
             long now = android.os.SystemClock.elapsedRealtime();
-            if (now - lastButtonTime < 350) return;
+            if (now - lastButtonTime < 350) {
+                recordDiagnostic("切替を見送り: 350ms以内の重複"); return;
+            }
             lastButtonTime = now;
-            webView.evaluateJavascript("window.intercomNativeToggle?.()", null);
+            webView.evaluateJavascript("(() => { if (typeof window.intercomNativeToggle !== 'function') return 'missing'; window.intercomNativeToggle(); return 'called'; })()",
+                result -> recordDiagnostic("Web画面へ切替要求: " + result));
         });
     }
 
@@ -175,9 +278,11 @@ public final class MainActivity extends Activity {
         boolean active = joined && foreground && webView != null;
         if (active && !hasAudioFocus) {
             hasAudioFocus = audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+            focusStatus = hasAudioFocus ? "取得成功" : "取得失敗";
         } else if (!active && hasAudioFocus) {
             audioManager.abandonAudioFocusRequest(audioFocusRequest);
             hasAudioFocus = false;
+            focusStatus = "解放";
         }
         if (active && hasAudioFocus) startControlPlayback();
         else stopControlPlayback();
@@ -206,14 +311,17 @@ public final class MainActivity extends Activity {
             if (track.getState() != AudioTrack.STATE_INITIALIZED ||
                 track.write(new short[sampleRate], 0, sampleRate) != sampleRate ||
                 track.setLoopPoints(0, sampleRate, -1) != AudioTrack.SUCCESS) {
+                playbackStatus = "初期化失敗";
                 track.release();
                 return;
             }
             track.setVolume(0f);
             track.play();
             controlPlayback = track;
+            playbackStatus = "再生中";
         } catch (RuntimeException e) {
             if (track != null) track.release();
+            playbackStatus = "失敗: " + e.getClass().getSimpleName();
             Log.w("StaffIntercom", "Could not start media control playback", e);
         }
     }
@@ -223,6 +331,7 @@ public final class MainActivity extends Activity {
         controlPlayback.stop();
         controlPlayback.release();
         controlPlayback = null;
+        playbackStatus = "停止";
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
@@ -258,6 +367,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        diagnosticHandler.removeCallbacks(diagnosticRefresh);
         joined = false;
         if (pendingAudioRequest != null) pendingAudioRequest.deny();
         mediaSession.setActive(false);
