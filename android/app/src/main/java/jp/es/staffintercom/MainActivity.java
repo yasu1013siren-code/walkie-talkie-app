@@ -75,6 +75,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        TestCallService.setListener(this::recordDiagnostic);
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(new AudioAttributes.Builder()
@@ -110,6 +111,8 @@ public final class MainActivity extends Activity {
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface public void setJoined(boolean value) {
                 runOnUiThread(() -> {
+                    if (value && TestCallService.isTesting())
+                        TestCallService.finish("ルーム参加に伴いテスト終了", android.telecom.DisconnectCause.LOCAL);
                     if (value && !joined) hasJoinedOnce = true;
                     joined = value;
                     if (!joined) talking = false;
@@ -164,7 +167,7 @@ public final class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
         LinearLayout actions = new LinearLayout(this);
         TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.8");
+        title.setText("イヤホン診断 v0.1.9");
         actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button copy = new Button(this);
         copy.setText("コピー");
@@ -181,6 +184,29 @@ public final class MainActivity extends Activity {
         });
         actions.addView(clear);
         root.addView(actions);
+        LinearLayout testActions = new LinearLayout(this);
+        Button testIncoming = new Button(this);
+        testIncoming.setText("着信テスト");
+        testIncoming.setOnClickListener(v -> {
+            if (joined) {
+                recordDiagnostic("通話テストはルームを退出してから開始してください"); return;
+            }
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+                recordDiagnostic("通知を許可後、着信テストをもう一度押してください"); return;
+            }
+            TestCallService.start(this);
+        });
+        testActions.addView(testIncoming, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button testAnswer = new Button(this);
+        testAnswer.setText("画面で応答");
+        testAnswer.setOnClickListener(v -> TestCallService.answerFromScreen());
+        testActions.addView(testAnswer, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button testEnd = new Button(this);
+        testEnd.setText("テスト終了");
+        testEnd.setOnClickListener(v -> TestCallService.finish("画面からテスト終了", android.telecom.DisconnectCause.LOCAL));
+        testActions.addView(testEnd, new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(testActions);
         ScrollView diagnosticScroll = new ScrollView(this);
         diagnosticView = new TextView(this);
         diagnosticView.setTextSize(12);
@@ -292,8 +318,11 @@ public final class MainActivity extends Activity {
     private void renderDiagnostics() {
         if (diagnosticView == null) return;
         StringBuilder text = new StringBuilder();
-        text.append("診断 v0.1.8 / Android ").append(Build.VERSION.RELEASE)
+        text.append("診断 v0.1.9 / Android ").append(Build.VERSION.RELEASE)
             .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
+        text.append("通話テスト=").append(TestCallService.status)
+            .append("\n外部応答=").append(TestCallService.answers)
+            .append("件 / 外部切断・拒否=").append(TestCallService.disconnects).append("件\n");
         text.append("ルーム=").append(joined ? "参加" : "未参加")
             .append(" / 画面=").append(foreground ? "表示中" : "非表示")
             .append(" / 送信=").append(talking ? "中" : "停止")
@@ -452,6 +481,8 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (TestCallService.isTesting()) TestCallService.finish("画面終了に伴いテスト終了", android.telecom.DisconnectCause.LOCAL);
+        TestCallService.setListener(null);
         diagnosticHandler.removeCallbacksAndMessages(null);
         joined = false;
         if (pendingAudioRequest != null) pendingAudioRequest.deny();
