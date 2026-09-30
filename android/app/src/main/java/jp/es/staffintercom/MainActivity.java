@@ -214,7 +214,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> {
             keyEvents++;
             recordDiagnostic(source + " " + KeyEvent.keyCodeToString(event.getKeyCode()) +
-                "(" + event.getKeyCode() + ") " + KeyEvent.actionToString(event.getAction()) +
+                "(" + event.getKeyCode() + ") " + (event.getAction() == KeyEvent.ACTION_DOWN ? "押下" : event.getAction() == KeyEvent.ACTION_UP ? "解放" : "複数入力") +
                 " repeat=" + event.getRepeatCount());
         });
     }
