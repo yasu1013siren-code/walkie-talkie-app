@@ -30,6 +30,7 @@ public class IntercomCallServiceTest {
         public boolean isTransmitting() { return !transmissions.isEmpty() && transmissions.get(transmissions.size() - 1); }
         public void status(String value) {}
         public void restoreRoute() {}
+        public void interrupted() { transmit(false); }
     }
     @Before public void setup() {
         app = RuntimeEnvironment.getApplication();
@@ -44,6 +45,41 @@ public class IntercomCallServiceTest {
         assertEquals(Connection.STATE_RINGING, connection.getState());
         assertTrue(client.transmissions.isEmpty());
         return connection;
+    }
+    @Test public void ownPendingAndRingingCallRetainAudioOnFocusLoss() {
+        IntercomService audio = Robolectric.buildService(IntercomService.class).create().get();
+        IntercomCallService.enable(app, client, true);
+        audio.onAudioFocusChanged(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT);
+        assertTrue(audio.canUseAudio());
+        Connection connection = telecom.allowIncomingCall(telecom.getLastIncomingCall());
+        audio.onAudioFocusChanged(android.media.AudioManager.AUDIOFOCUS_LOSS);
+        assertTrue(audio.canUseAudio());
+        assertEquals(Connection.STATE_RINGING, connection.getState());
+        assertTrue(client.transmissions.isEmpty());
+        connection.onAnswer();
+        assertEquals(Arrays.asList(true), client.transmissions);
+        connection.onDisconnect();
+        assertFalse(IntercomCallService.ownsControlAudio());
+        audio.onDestroy();
+    }
+    @Test public void realTelecomFocusLossStopsAndDoesNotRearm() {
+        Connection connection = start(); connection.onAnswer();
+        IntercomCallService service = Robolectric.buildService(IntercomCallService.class).create().get();
+        service.onConnectionServiceFocusLost();
+        assertFalse(IntercomCallService.ownsControlAudio());
+        assertEquals(Arrays.asList(true, false), client.transmissions);
+        service.onConnectionServiceFocusGained(); connection.onAnswer();
+        IntercomCallService.setConnected(true);
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2));
+        assertEquals(1, telecom.getAllIncomingCalls().size());
+        assertEquals(Arrays.asList(true, false), client.transmissions);
+    }
+    @Test public void ordinaryFocusLossWithoutS10BlocksAudio() {
+        IntercomService audio = Robolectric.buildService(IntercomService.class).create().get();
+        audio.onAudioFocusChanged(android.media.AudioManager.AUDIOFOCUS_GAIN);
+        assertTrue(audio.canUseAudio());
+        audio.onAudioFocusChanged(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT);
+        assertFalse(audio.canUseAudio()); audio.onDestroy();
     }
     @Test public void repeatedAnswerDisconnectCyclesStopAndRearmWithoutAutoTransmission() {
         Connection connection = start();

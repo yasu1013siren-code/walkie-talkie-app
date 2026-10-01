@@ -55,6 +55,7 @@ public final class IntercomService extends Service {
         public boolean isTransmitting() { return talking; }
         public void status(String value) { headsetStatus = value; }
         public void restoreRoute() { if (joined) selectAudioRoute(); }
+        public void interrupted() { interruptAudio(); }
     };
     void setHeadsetCalls(boolean value) {
         headsetCalls = value;
@@ -76,12 +77,7 @@ public final class IntercomService extends Service {
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL, "インカム通話", NotificationManager.IMPORTANCE_LOW));
         focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            .setOnAudioFocusChangeListener(change -> {
-                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                    hasFocus = false; setTalking(false);
-                    if (joined) { status = "音声が他の通話に切り替わりました。通話終了後に接続を再確認してください"; updateNotification(); }
-                } else if (change == AudioManager.AUDIOFOCUS_GAIN) { hasFocus = true; selectAudioRoute(); updateStatus(); }
-            }, main).build();
+            .setOnAudioFocusChangeListener(this::onAudioFocusChanged, main).build();
         mediaSession = new MediaSession(this, "StaffIntercomNative");
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override public boolean onMediaButtonEvent(Intent intent) {
@@ -96,6 +92,23 @@ public final class IntercomService extends Service {
         }, main);
         mediaSession.setMetadata(new MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, "スタッフインカム").build());
         audio.registerAudioDeviceCallback(deviceCallback, main);
+    }
+    boolean canUseAudio() { return !IntercomCallService.isInterrupted() && (hasFocus || IntercomCallService.ownsControlAudio()); }
+    void onAudioFocusChanged(int change) {
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            hasFocus = false;
+            if (!IntercomCallService.ownsControlAudio()) interruptAudio();
+        } else if (change == AudioManager.AUDIOFOCUS_GAIN) {
+            hasFocus = true;
+            if (joined) { selectAudioRoute(); updateStatus(); }
+        }
+    }
+    private void interruptAudio() {
+        hasFocus = false; setTalking(false);
+        if (joined) {
+            status = "音声が他の通話に切り替わりました。通話終了後に接続を再確認してください";
+            updateNotification();
+        }
     }
     private final AudioDeviceCallback deviceCallback = new AudioDeviceCallback() {
         @Override public void onAudioDevicesAdded(AudioDeviceInfo[] devices) { if (joined) main.postDelayed(() -> { if (joined) selectAudioRoute(); }, 300); }
@@ -236,9 +249,9 @@ public final class IntercomService extends Service {
         public void onAddTrack(RtpReceiver receiver, MediaStream[] streams) {}
     }
     void selectAudioRoute() {
-        if (!joined) return;
-        if (!hasFocus) hasFocus = audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
-        if (!hasFocus) { route = "音声を使用できません。他の通話が終了してから再確認してください"; updateNotification(); return; }
+        if (!joined || IntercomCallService.isInterrupted()) return;
+        if (!canUseAudio()) hasFocus = audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        if (!canUseAudio()) { route = "音声を使用できません。他の通話が終了してから再確認してください"; updateNotification(); return; }
         try {
             audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
             if (Build.VERSION.SDK_INT >= 31) {
@@ -266,7 +279,7 @@ public final class IntercomService extends Service {
     }
     void toggleTalking() { setTalking(!talking); }
     void setTalking(boolean value) {
-        boolean next = value && joined && connected && track != null && hasFocus;
+        boolean next = value && joined && connected && track != null && canUseAudio();
         if (talking == next) return;
         talking = next; track.setEnabled(next);
         IntercomCallService.syncTalking(next);
@@ -304,7 +317,7 @@ public final class IntercomService extends Service {
         if (audioModule != null) { audioModule.release(); audioModule = null; }
         initialized = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); wakeLock = null;
-        if (hasFocus) audio.abandonAudioFocusRequest(focus); hasFocus = false;
+        audio.abandonAudioFocusRequest(focus); hasFocus = false;
         try { if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice(); else { audio.stopBluetoothSco(); audio.setBluetoothScoOn(false); } audio.setMode(AudioManager.MODE_NORMAL); } catch (RuntimeException ignored) {}
         status = "未参加"; route = "音声出力：未接続"; updateNotification(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
     }

@@ -14,6 +14,7 @@ public final class IntercomCallService extends ConnectionService {
         boolean isTransmitting();
         void status(String text);
         void restoreRoute();
+        void interrupted();
     }
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final String CHANNEL = "intercom-s10-controls", TOKEN = "intercom-control-token";
@@ -21,7 +22,7 @@ public final class IntercomCallService extends ConnectionService {
     private static Context context;
     private static Client client;
     private static ControlConnection connection;
-    private static boolean enabled, ready;
+    private static boolean enabled, ready, interrupted;
     private static int serial, pendingToken;
     private static final Runnable ARM = IntercomCallService::arm;
     private static final Runnable TIMEOUT = () -> {
@@ -31,21 +32,42 @@ public final class IntercomCallService extends ConnectionService {
         }
     };
     static void enable(Context value, Client listener, boolean connected) {
-        disable(); context = value.getApplicationContext(); client = listener; enabled = true; ready = connected;
+        disable(); context = value.getApplicationContext(); client = listener; enabled = true; ready = connected; interrupted = false;
         if (ready) arm(); else say("S10：ルーム接続待ち");
     }
     static void disable() {
-        enabled = false; ready = false;
+        enabled = false; ready = false; interrupted = false;
         MAIN.removeCallbacks(ARM); MAIN.removeCallbacks(TIMEOUT);
         closeConnection(DisconnectCause.LOCAL);
         client = null;
     }
     static void setConnected(boolean value) {
-        if (!enabled) return;
+        if (!enabled || interrupted) return;
         ready = value;
         if (!ready) {
             MAIN.removeCallbacks(ARM); closeConnection(DisconnectCause.LOCAL); say("S10：再接続待ち");
         } else if (connection == null && pendingToken == 0) arm();
+    }
+    // Telecom takes audio focus for our own ringing/active control call. A normal
+    // AudioManager loss during this period is not an unrelated telephone call.
+    static boolean isInterrupted() { return enabled && interrupted; }
+    static boolean ownsControlAudio() {
+        return enabled && ready && !interrupted && (pendingToken != 0 || connection != null);
+    }
+    @Override public void onConnectionServiceFocusGained() {
+        if (ownsControlAudio() && client != null) client.restoreRoute();
+    }
+    @Override public void onConnectionServiceFocusLost() {
+        // A callback after our own disconnect is expected. A live call losing
+        // Telecom focus is an actual interruption: do not re-arm or auto-send.
+        if (ownsControlAudio()) {
+            interrupted = true; ready = false;
+            MAIN.removeCallbacks(ARM);
+            closeConnection(DisconnectCause.LOCAL);
+            if (client != null) client.interrupted();
+            say("S10：別の通話で中断。通話終了後に操作をOFF→ONしてください");
+        }
+        connectionServiceFocusReleased();
     }
     static void syncTalking(boolean talking) {
         if (!enabled || !ready) return;
@@ -123,6 +145,10 @@ public final class IntercomCallService extends ConnectionService {
         ControlConnection old = connection; connection = null;
         if (old != null) { old.setDisconnected(new DisconnectCause(cause)); old.destroy(); }
         cancelNotice();
+        Client owner = client;
+        MAIN.postDelayed(() -> {
+            if (!interrupted && client == owner && owner != null) owner.restoreRoute();
+        }, 400);
     }
     private static void showIncoming() {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
