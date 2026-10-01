@@ -34,7 +34,8 @@ public final class IntercomService extends Service {
     private AudioTrack track;
     private AudioManager audio;
     private AudioFocusRequest focus;
-    private boolean hasFocus, joined, connected, talking, initialized;
+    private boolean hasFocus, joined, connected, talking, initialized, headsetCalls;
+    private String headsetStatus = "S10：ボタン操作OFF";
     private String room = "", userName = "", status = "未参加", route = "音声出力：未接続";
     private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
@@ -47,6 +48,27 @@ public final class IntercomService extends Service {
     boolean isTalking() { return talking; }
     String getStatus() { return status; }
     String getRoute() { return route; }
+    String getHeadsetStatus() { return headsetStatus; }
+    boolean usesHeadsetCalls() { return headsetCalls; }
+    private final IntercomCallService.Client callClient = new IntercomCallService.Client() {
+        public boolean transmit(boolean value) { setTalking(value); return talking == value; }
+        public boolean isTransmitting() { return talking; }
+        public void status(String value) { headsetStatus = value; }
+        public void restoreRoute() { if (joined) selectAudioRoute(); }
+    };
+    void setHeadsetCalls(boolean value) {
+        headsetCalls = value;
+        if (joined && Build.VERSION.SDK_INT >= 30) {
+            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+            if (value) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
+            startForeground(NOTICE, notification(), types);
+        }
+        if (joined && value) IntercomCallService.enable(this, callClient, connected);
+        else {
+            IntercomCallService.disable(); headsetStatus = "S10：ボタン操作OFF";
+            if (joined) { setTalking(false); main.postDelayed(callClient::restoreRoute, 400); }
+        }
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -96,7 +118,7 @@ public final class IntercomService extends Service {
                 wakeLock = ((PowerManager) getSystemService(POWER_SERVICE)).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StaffIntercom:session");
                 wakeLock.acquire(); // Released on explicit leave, failure and service destruction.
                 selectAudioRoute();
-                initializeAudio(); connect(); updateNotification();
+                initializeAudio(); setHeadsetCalls(intent.getBooleanExtra("headsetCalls", false)); connect(); updateNotification();
             } catch (Throwable error) {
                 android.util.Log.e("StaffIntercom", "Session start failed", error);
                 leave(); status = "参加できませんでした：" + error.getClass().getSimpleName();
@@ -123,9 +145,9 @@ public final class IntercomService extends Service {
         IO.Options options = new IO.Options(); options.transports = new String[]{"websocket"}; options.reconnection = true;
         options.reconnectionDelay = 1000; options.reconnectionDelayMax = 5000; options.timeout = 20000;
         final Socket current = IO.socket(URI.create(SITE), options); socket = current;
-        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = true; closePeers(); setTalking(false); current.emit("join-room", json("roomId", room, "name", userName)); updateStatus(); });
-        listen(current, session, Socket.EVENT_DISCONNECT, args -> { connected = false; setTalking(false); closePeers(); status = "通信が切れました。再接続中…"; updateNotification(); });
-        listen(current, session, Socket.EVENT_CONNECT_ERROR, args -> { connected = false; setTalking(false); status = "サーバー接続を再試行中…"; updateNotification(); });
+        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = true; closePeers(); setTalking(false); current.emit("join-room", json("roomId", room, "name", userName)); IntercomCallService.setConnected(true); updateStatus(); });
+        listen(current, session, Socket.EVENT_DISCONNECT, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); closePeers(); status = "通信が切れました。再接続中…"; updateNotification(); });
+        listen(current, session, Socket.EVENT_CONNECT_ERROR, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); status = "サーバー接続を再試行中…"; updateNotification(); });
         listen(current, session, "existing-users", args -> {
             JSONArray users = (JSONArray) args[0];
             for (int i = 0; i < users.length(); i++) { JSONObject user = users.optJSONObject(i); if (user != null) createPeer(user.optString("id"), user.optString("name"), true); }
@@ -247,6 +269,7 @@ public final class IntercomService extends Service {
         boolean next = value && joined && connected && track != null && hasFocus;
         if (talking == next) return;
         talking = next; track.setEnabled(next);
+        IntercomCallService.syncTalking(next);
         if (socket != null && connected) socket.emit("talking", next);
         updateStatus();
     }
@@ -271,6 +294,7 @@ public final class IntercomService extends Service {
     private static JSONObject json(Object... pairs) { JSONObject out = new JSONObject(); try { for (int i = 0; i < pairs.length; i += 2) out.put((String) pairs[i], pairs[i + 1]); } catch (JSONException e) { throw new IllegalArgumentException(e); } return out; }
     private void closePeers() { List<Peer> old = new ArrayList<>(peers.values()); peers.clear(); for (Peer peer : old) peer.close(); }
     void leave() {
+        IntercomCallService.disable(); headsetStatus = "S10：ボタン操作OFF";
         setTalking(false); joined = false; connected = false; generation++;
         if (socket != null) { socket.emit("leave-room"); socket.off(); socket.disconnect(); socket = null; }
         closePeers();

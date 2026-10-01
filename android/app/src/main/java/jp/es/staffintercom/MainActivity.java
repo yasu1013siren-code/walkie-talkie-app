@@ -14,7 +14,8 @@ public final class MainActivity extends Activity {
     private IntercomService service;
     private boolean bound, holding;
     private EditText room, name;
-    private TextView status, route;
+    private TextView status, route, headsetState;
+    private CheckBox headsetMode;
     private Button join, leave, latch, ptt;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -33,15 +34,23 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (20 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
-        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.1\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
+        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.2\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
         room = new EditText(this); room.setSingleLine(true); room.setHint("ルームID（例：es）");
         name = new EditText(this); name.setSingleLine(true); name.setHint("名前");
         android.content.SharedPreferences prefs = getSharedPreferences("intercom", MODE_PRIVATE);
         room.setText(prefs.getString("room", "es")); name.setText(prefs.getString("name", ""));
         root.addView(room); root.addView(name);
+        headsetMode = new CheckBox(this); headsetMode.setText("S10ボタン操作を使う（試験）");
+        headsetMode.setChecked(prefs.getBoolean("headsetCalls", false));
+        headsetMode.setOnCheckedChangeListener((button, checked) -> {
+            getSharedPreferences("intercom", MODE_PRIVATE).edit().putBoolean("headsetCalls", checked).apply();
+            if (service != null) service.setHeadsetCalls(checked);
+        });
+        root.addView(headsetMode);
         join = button(root, "ルームに参加", v -> requestJoin());
         status = new TextView(this); status.setTextSize(18); status.setPadding(0, pad, 0, pad); root.addView(status);
         route = new TextView(this); route.setTextSize(15); root.addView(route);
+        headsetState = new TextView(this); root.addView(headsetState);
         ptt = button(root, "押しながら話す", null);
         ptt.setOnTouchListener((v, event) -> {
             if (service == null) return false;
@@ -55,7 +64,7 @@ public final class MainActivity extends Activity {
         button(root, "Bluetooth接続を再確認", v -> { if (service != null) service.selectAudioRoute(); render(); });
         leave = button(root, "退出", v -> { if (service != null) service.leave(); render(); });
         TextView help = new TextView(this);
-        help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\nイヤホンボタンは機種によって届かない場合があります。");
+        help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\nS10操作ON：通話ボタンで送信開始、もう一度押すと停止。\n停止後は次の操作の準備に約1秒かかります。イヤホン側で待機音が鳴る場合があります。");
         help.setPadding(0, pad, 0, 0); root.addView(help);
         ScrollView scroll = new ScrollView(this); scroll.addView(root); setContentView(scroll); render();
     }
@@ -78,7 +87,7 @@ public final class MainActivity extends Activity {
     private void startSession() {
         getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();
         Intent intent = new Intent(this, IntercomService.class).setAction(IntercomService.JOIN)
-            .putExtra("room", room.getText().toString().trim()).putExtra("name", name.getText().toString().trim());
+            .putExtra("room", room.getText().toString().trim()).putExtra("name", name.getText().toString().trim()).putExtra("headsetCalls", headsetMode.isChecked());
         startForegroundService(intent);
     }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
@@ -95,6 +104,7 @@ public final class MainActivity extends Activity {
         boolean connected = active && service.isConnected();
         status.setText(service == null ? "未参加" : service.getStatus());
         route.setText(service == null ? "音声出力：未接続" : service.getRoute());
+        headsetState.setText(service == null ? "" : service.getHeadsetStatus());
         join.setEnabled(!active); room.setEnabled(!active); name.setEnabled(!active);
         leave.setEnabled(active); ptt.setEnabled(connected); latch.setEnabled(connected);
         boolean talking = active && service.isTalking();
