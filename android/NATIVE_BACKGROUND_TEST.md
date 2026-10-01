@@ -53,3 +53,9 @@ gradle -p android :app:assembleDebug --no-daemon
 ## 実施した確認
 
 2026-10-01：Android debug APKのビルド成功、APK署名検証成功。ARM64 / ARMv7スマートフォン向け。既存サーバー・Web版のNodeテスト2件は成功しました。ネイティブ版の実機による音声・バックグラウンド・Bluetoothの動作は未確認です。
+
+## 0.2.1：2台目参加時のクラッシュ対策
+
+v0.2.0の完成APKに ACCESS_NETWORK_STATE / CHANGE_NETWORK_STATE が含まれていないことを確認しました。ネイティブWebRTCのNetworkMonitorに必要な権限を追加し、JNI呼び出し前にも権限の確認を入れています。アプリIDと署名鍵は0.2.0と同じで、上書き更新できます。権限不足は確認済みですが、ユーザー端末のクラッシュログは取得していないため、実際の終了原因の確定と2台での送受信確認は未完了です。
+
+参考：WebRTC NetworkMonitor.java https://chromium.googlesource.com/external/webrtc/+/HEAD/sdk/android/api/org/webrtc/NetworkMonitor.java

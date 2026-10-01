@@ -106,6 +106,12 @@ public final class IntercomService extends Service {
     }
     private void initializeAudio() {
         if (initialized) return;
+        // Fail in Java before NetworkMonitor is called from JNI; a pending SecurityException
+        // from a native callback can otherwise abort the process when the first peer joins.
+        if (checkSelfPermission(Manifest.permission.ACCESS_NETWORK_STATE) != PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.CHANGE_NETWORK_STATE) != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException("Native WebRTC requires network-state permissions");
+        }
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this).createInitializationOptions());
         audioModule = JavaAudioDeviceModule.builder(this).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();

@@ -33,7 +33,7 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (20 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
-        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.0\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
+        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.1\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
         room = new EditText(this); room.setSingleLine(true); room.setHint("ルームID（例：es）");
         name = new EditText(this); name.setSingleLine(true); name.setHint("名前");
         android.content.SharedPreferences prefs = getSharedPreferences("intercom", MODE_PRIVATE);
