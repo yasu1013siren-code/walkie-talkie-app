@@ -2,525 +2,121 @@ package jp.es.staffintercom;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
+import android.content.*;
 import android.content.pm.PackageManager;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioFormat;
-import android.media.AudioDeviceInfo;
-import android.media.AudioRecordingConfiguration;
-import android.os.Build;
-import android.media.AudioManager;
-import android.media.AudioTrack;
-import android.media.MediaMetadata;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
-import android.net.Uri;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-import android.widget.ScrollView;
-import android.widget.Button;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import java.util.ArrayDeque;
-import android.view.KeyEvent;
-import android.widget.Toast;
-import android.util.Log;
-import android.webkit.JavascriptInterface;
-import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.os.*;
+import android.view.*;
+import android.widget.*;
+import java.util.ArrayList;
 
+/** UI only: the service owns the audio session, including while this Activity is stopped. */
 public final class MainActivity extends Activity {
-    private static final String SITE = "https://walkie-talkie-app-42l7.onrender.com";
-    private static final int AUDIO_PERMISSION = 100;
-    private static final Uri SITE_URI = Uri.parse(SITE);
-    private TextView diagnosticView;
-    private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
-    private final ArrayDeque<String> diagnosticEvents = new ArrayDeque<>();
-    private String audioObservation = "未観測";
-    private String beforeJoin = "未観測";
-    private String duringJoin = "未観測";
-    private String afterLeave = "未観測";
-    private boolean hasJoinedOnce;
-    private int keyEvents;
-    private int mediaCommands;
-    private String focusStatus = "未要求";
-    private String playbackStatus = "停止";
-    private final Runnable diagnosticRefresh = new Runnable() {
-        @Override public void run() {
-            sampleAudioState();
-            renderDiagnostics();
-            diagnosticHandler.postDelayed(this, 1000);
-        }
+    private IntercomService service;
+    private boolean bound, holding;
+    private EditText room, name;
+    private TextView status, route, headsetState;
+    private CheckBox headsetMode;
+    private Button join, leave, latch, ptt;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable refresh = new Runnable() {
+        public void run() { render(); handler.postDelayed(this, 500); }
     };
-    private WebView webView;
-    private MediaSession mediaSession;
-    private AudioManager audioManager;
-    private AudioFocusRequest audioFocusRequest;
-    private AudioTrack controlPlayback;
-    private boolean hasAudioFocus;
-    private PermissionRequest pendingAudioRequest;
-    private boolean joined;
-    private boolean talking;
-    private boolean foreground;
-    private boolean pageLoaded;
-    private long lastButtonTime;
-    private volatile String microphoneEvent = "WebViewのマイク要求は未受信";
+    private final ServiceConnection connection = new ServiceConnection() {
+        public void onServiceConnected(ComponentName n, IBinder b) {
+            service = ((IntercomService.LocalBinder) b).getService(); render();
+        }
+        public void onServiceDisconnected(ComponentName n) { service = null; render(); }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        final android.content.SharedPreferences crashPrefs = getSharedPreferences("intercom-crash", MODE_PRIVATE);
-        final Thread.UncaughtExceptionHandler previousHandler = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
-            String report = android.util.Log.getStackTraceString(error);
-            crashPrefs.edit().putString("lastCrash", report.substring(0, Math.min(report.length(), 3000))).commit();
-            if (previousHandler != null) previousHandler.uncaughtException(thread, error);
-            else android.os.Process.killProcess(android.os.Process.myPid());
-        });
-        String lastCrash = crashPrefs.getString("lastCrash", "");
-        if (!lastCrash.isEmpty()) recordDiagnostic("前回の終了原因: " + lastCrash);
-        TestCallService.setListener(this::recordDiagnostic);
-        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            .setOnAudioFocusChangeListener(change -> {
-                focusStatus = "通知=" + change;
-                recordDiagnostic("音声フォーカス " + change);
-                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
-                    stopFromHeadset();
-            }).build();
-        mediaSession = new MediaSession(this, "StaffIntercom");
-        mediaSession.setCallback(new MediaSession.Callback() {
-            @Override public boolean onMediaButtonEvent(Intent intent) {
-                KeyEvent event = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
-                if (event != null) recordKey("MediaSession", event);
-                if (event == null || !isToggleKey(event.getKeyCode())) return super.onMediaButtonEvent(intent);
-                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) toggleFromHeadset();
-                return true;
-            }
-            @Override public void onPlay() { recordCommand("PLAY"); toggleFromHeadset(); }
-            @Override public void onPause() { recordCommand("PAUSE"); toggleFromHeadset(); }
-            @Override public void onStop() { recordCommand("STOP"); toggleFromHeadset(); }
-        });
-        mediaSession.setMetadata(new MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, "スタッフインカム").build());
-        updateSession();
-
-        webView = new WebView(this);
-        webView.getSettings().setJavaScriptEnabled(true);
-        webView.getSettings().setDomStorageEnabled(true);
-        webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        webView.addJavascriptInterface(new Object() {
-            @JavascriptInterface public void setJoined(boolean value) {
-                runOnUiThread(() -> {
-                    if (value && TestCallService.isTesting())
-                        TestCallService.finish("ルーム参加に伴いテスト終了", android.telecom.DisconnectCause.LOCAL);
-                    if (value && !joined) hasJoinedOnce = true;
-                    joined = value;
-                    if (!joined) talking = false;
-                    updateSession();
-                });
-            }
-            @JavascriptInterface public void setTalking(boolean value) {
-                runOnUiThread(() -> { talking = joined && value; updateSession(); });
-            }
-            @JavascriptInterface public String getMicrophoneDiagnostics() {
-                return "Android権限=" + (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED ? "許可" : "拒否") +
-                    " / " + microphoneEvent;
-            }
-        }, "IntercomNative");
-        webView.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return !SITE.equals(request.getUrl().getScheme() + "://" + request.getUrl().getAuthority());
-            }
-        });
-        webView.setWebChromeClient(new WebChromeClient() {
-            @Override public void onPermissionRequest(PermissionRequest request) {
-                runOnUiThread(() -> {
-                    Uri origin = request.getOrigin();
-                    microphoneEvent = "WebView要求あり: " + origin;
-                    if (!SITE_URI.getScheme().equals(origin.getScheme()) ||
-                        !SITE_URI.getHost().equals(origin.getHost()) ||
-                        (origin.getPort() != -1 && origin.getPort() != 443) ||
-                        !java.util.Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
-                        microphoneEvent = "WebView拒否: origin=" + origin + " resources=" + java.util.Arrays.toString(request.getResources());
-                        request.deny();
-                        Toast.makeText(MainActivity.this, "Web画面のマイク要求を許可できませんでした。アプリを再起動してください。", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                        microphoneEvent = "WebViewマイク許可済み: " + origin;
-                        request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-                    } else {
-                        microphoneEvent = "Android権限を要求中";
-                        if (pendingAudioRequest != null) pendingAudioRequest.deny();
-                        pendingAudioRequest = request;
-                        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION);
-                    }
-                });
-            }
-            @Override public void onPermissionRequestCanceled(PermissionRequest request) {
-                microphoneEvent = "WebView要求が取り消されました";
-                if (pendingAudioRequest == request) pendingAudioRequest = null;
-            }
-        });
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
-        LinearLayout actions = new LinearLayout(this);
-        TextView title = new TextView(this);
-        title.setText("イヤホン診断 v0.1.12");
-        actions.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
-        Button copy = new Button(this);
-        copy.setText("コピー");
-        copy.setOnClickListener(v -> {
-            ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(
-                ClipData.newPlainText("イヤホン診断", diagnosticView.getText()));
-            Toast.makeText(this, "診断をコピーしました", Toast.LENGTH_SHORT).show();
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        root.setPadding(pad, pad, pad, pad);
+        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.2\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
+        room = new EditText(this); room.setSingleLine(true); room.setHint("ルームID（例：es）");
+        name = new EditText(this); name.setSingleLine(true); name.setHint("名前");
+        android.content.SharedPreferences prefs = getSharedPreferences("intercom", MODE_PRIVATE);
+        room.setText(prefs.getString("room", "es")); name.setText(prefs.getString("name", ""));
+        root.addView(room); root.addView(name);
+        headsetMode = new CheckBox(this); headsetMode.setText("S10ボタン操作を使う（試験）");
+        headsetMode.setChecked(prefs.getBoolean("headsetCalls", false));
+        headsetMode.setOnCheckedChangeListener((button, checked) -> {
+            getSharedPreferences("intercom", MODE_PRIVATE).edit().putBoolean("headsetCalls", checked).apply();
+            if (service != null) service.setHeadsetCalls(checked);
         });
-        actions.addView(copy);
-        Button clear = new Button(this);
-        clear.setText("消去");
-        clear.setOnClickListener(v -> {
-            diagnosticEvents.clear(); keyEvents = 0; mediaCommands = 0; renderDiagnostics();
-        });
-        actions.addView(clear);
-        actions.setVisibility(android.view.View.GONE);
-        root.addView(actions);
-        LinearLayout testActions = new LinearLayout(this);
-        Button testIncoming = new Button(this);
-        testIncoming.setText("着信テスト");
-        testIncoming.setOnClickListener(v -> {
-            if (joined) {
-                recordDiagnostic("通話テストはルームを退出してから開始してください"); return;
+        root.addView(headsetMode);
+        join = button(root, "ルームに参加", v -> requestJoin());
+        status = new TextView(this); status.setTextSize(18); status.setPadding(0, pad, 0, pad); root.addView(status);
+        route = new TextView(this); route.setTextSize(15); root.addView(route);
+        headsetState = new TextView(this); root.addView(headsetState);
+        ptt = button(root, "押しながら話す", null);
+        ptt.setOnTouchListener((v, event) -> {
+            if (service == null) return false;
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: holding = true; service.setTalking(true); render(); return true;
+                case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL: holding = false; service.setTalking(false); render(); return true;
             }
-            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
-                recordDiagnostic("通知を許可後、着信テストをもう一度押してください"); return;
-            }
-            TestCallService.start(this);
-        });
-        testActions.addView(testIncoming, new LinearLayout.LayoutParams(0, -2, 1f));
-        Button testAnswer = new Button(this);
-        testAnswer.setText("画面で応答");
-        testAnswer.setOnClickListener(v -> TestCallService.answerFromScreen());
-        testActions.addView(testAnswer, new LinearLayout.LayoutParams(0, -2, 1f));
-        Button testEnd = new Button(this);
-        testEnd.setText("テスト終了");
-        testEnd.setOnClickListener(v -> TestCallService.finish("画面からテスト終了", android.telecom.DisconnectCause.LOCAL));
-        testActions.addView(testEnd, new LinearLayout.LayoutParams(0, -2, 1f));
-        testActions.setVisibility(android.view.View.GONE);
-        root.addView(testActions);
-        ScrollView diagnosticScroll = new ScrollView(this);
-        diagnosticView = new TextView(this);
-        diagnosticView.setTextSize(12);
-        diagnosticView.setTextIsSelectable(true);
-        diagnosticView.setPadding(12, 4, 12, 8);
-        diagnosticScroll.addView(diagnosticView);
-        root.addView(diagnosticScroll, new LinearLayout.LayoutParams(-1,
-            (int) (150 * getResources().getDisplayMetrics().density)));
-        diagnosticScroll.setVisibility(android.view.View.GONE);
-        Button diagnosticToggle = new Button(this);
-        diagnosticToggle.setText("診断を表示");
-        diagnosticToggle.setOnClickListener(v -> {
-            boolean show = diagnosticScroll.getVisibility() != android.view.View.VISIBLE;
-            int visibility = show ? android.view.View.VISIBLE : android.view.View.GONE;
-            actions.setVisibility(visibility);
-            testActions.setVisibility(visibility);
-            diagnosticScroll.setVisibility(visibility);
-            diagnosticToggle.setText(show ? "診断を閉じる" : "診断を表示");
-        });
-        root.addView(diagnosticToggle, new LinearLayout.LayoutParams(-1, -2));
-        setContentView(root);
-        diagnosticHandler.post(diagnosticRefresh);
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            loadWebApp();
-        } else {
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION);
-        }
-    }
-
-    private void loadWebApp() {
-        if (pageLoaded) return;
-        pageLoaded = true;
-        webView.loadUrl(SITE + "/");
-    }
-
-    private static boolean isToggleKey(int code) {
-        return code == KeyEvent.KEYCODE_HEADSETHOOK || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
-            code == KeyEvent.KEYCODE_MEDIA_PLAY || code == KeyEvent.KEYCODE_MEDIA_PAUSE ||
-            code == KeyEvent.KEYCODE_MEDIA_STOP;
-    }
-
-    private void recordDiagnostic(String message) {
-        runOnUiThread(() -> {
-            String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN)
-                .format(new java.util.Date());
-            diagnosticEvents.addFirst(time + " " + message);
-            while (diagnosticEvents.size() > 12) diagnosticEvents.removeLast();
-            renderDiagnostics();
-        });
-    }
-
-    private void recordKey(String source, KeyEvent event) {
-        runOnUiThread(() -> {
-            keyEvents++;
-            recordDiagnostic((joined ? "参加中 " : "未参加 ") + source + " " + KeyEvent.keyCodeToString(event.getKeyCode()) +
-                "(" + event.getKeyCode() + ") " + (event.getAction() == KeyEvent.ACTION_DOWN ? "押下" : event.getAction() == KeyEvent.ACTION_UP ? "解放" : "複数入力") +
-                " repeat=" + event.getRepeatCount());
-        });
-    }
-
-    private void recordCommand(String command) {
-        mediaCommands++;
-        recordDiagnostic("音声操作受信: " + command);
-    }
-
-    private static String deviceDescription(AudioDeviceInfo device) {
-        if (device == null) return "未取得";
-        String type;
-        switch (device.getType()) {
-            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO: type = "Bluetooth通話(SCO)"; break;
-            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: type = "Bluetooth音楽(A2DP)"; break;
-            case AudioDeviceInfo.TYPE_BUILTIN_MIC: type = "本体マイク"; break;
-            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER: type = "本体スピーカー"; break;
-            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE: type = "本体受話口"; break;
-            case AudioDeviceInfo.TYPE_WIRED_HEADSET: type = "有線ヘッドセット"; break;
-            case AudioDeviceInfo.TYPE_USB_HEADSET: type = "USBヘッドセット"; break;
-            case AudioDeviceInfo.TYPE_BLE_HEADSET: type = "Bluetooth LEヘッドセット"; break;
-            default: type = "type=" + device.getType();
-        }
-        return type + " [" + device.getProductName() + "]";
-    }
-
-    private void sampleAudioState() {
-        if (audioManager == null) return;
-        StringBuilder state = new StringBuilder();
-        int mode = audioManager.getMode();
-        String modeName = mode == AudioManager.MODE_NORMAL ? "通常" :
-            mode == AudioManager.MODE_IN_COMMUNICATION ? "通話用" :
-            mode == AudioManager.MODE_IN_CALL ? "電話通話" :
-            mode == AudioManager.MODE_RINGTONE ? "着信" : "その他";
-        state.append("音声モード=").append(modeName).append("(").append(mode).append(")")
-            .append(" / SCO設定=").append(audioManager.isBluetoothScoOn() ? "ON" : "OFF");
-        if (Build.VERSION.SDK_INT >= 31) {
-            state.append("\nOSの通信デバイス=")
-                .append(deviceDescription(audioManager.getCommunicationDevice()));
-        } else {
-            state.append("\nOSの通信デバイス=Android 12未満のため取得対象外");
-        }
-        state.append("\n無音再生の実出力=")
-            .append(deviceDescription(controlPlayback == null ? null : controlPlayback.getRoutedDevice()));
-        state.append("\nOS報告の録音デバイス=");
-        try {
-            java.util.List<AudioRecordingConfiguration> configs = audioManager.getActiveRecordingConfigurations();
-            if (configs.isEmpty()) state.append("なし / 取得できない状態");
-            for (int i = 0; i < configs.size(); i++) {
-                if (i > 0) state.append(", ");
-                state.append(deviceDescription(configs.get(i).getAudioDevice()));
-            }
-        } catch (RuntimeException error) {
-            state.append("取得不可: ").append(error.getClass().getSimpleName());
-        }
-        audioObservation = state.toString();
-        String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN)
-            .format(new java.util.Date());
-        String snapshot = time + " キー=" + keyEvents + "件 / 音声操作=" + mediaCommands + "件\n" + audioObservation;
-        if (joined) duringJoin = snapshot;
-        else if (hasJoinedOnce) afterLeave = snapshot;
-        else beforeJoin = snapshot;
-    }
-
-    private void renderDiagnostics() {
-        if (diagnosticView == null) return;
-        StringBuilder text = new StringBuilder();
-        text.append("診断 v0.1.12 / Android ").append(Build.VERSION.RELEASE)
-            .append(" / ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
-        text.append("通話テスト=").append(TestCallService.status)
-            .append("\n外部応答=").append(TestCallService.answers)
-            .append("件 / 外部切断・拒否=").append(TestCallService.disconnects).append("件\n");
-        text.append("通話状態=").append(TestCallService.callState())
-            .append(" / ミュート=").append(TestCallService.muted == null ? "未取得" : TestCallService.muted ? "ON" : "OFF")
-            .append("\nミュート通知=").append(TestCallService.muteCallbacks)
-            .append("件 / ミュート変更=").append(TestCallService.muteChanges).append("件（初期状態・重複通知を除く）")
-            .append("\n最終ミュート変更=").append(TestCallService.lastMuteChange)
-            .append("\n※ミュート通知の操作元は特定できません。S10だけを操作して比較してください。\n");
-        text.append("ルーム=").append(joined ? "参加" : "未参加")
-            .append(" / 画面=").append(foreground ? "表示中" : "非表示")
-            .append(" / 送信=").append(talking ? "中" : "停止")
-            .append("\nMediaSession=").append(mediaSession != null && mediaSession.isActive() ? "有効" : "無効")
-            .append(" / フォーカス=").append(focusStatus)
-            .append("\n操作受付用の無音再生=").append(playbackStatus)
-            .append("\nキー受信=").append(keyEvents).append("件 / 音声操作受信=").append(mediaCommands).append("件")
-            .append("\n").append(microphoneEvent);
-        if (keyEvents == 0 && mediaCommands == 0)
-            text.append("\nメディアキー・音声操作は未受信（Telecomの応答・切断・ミュートは上記で別集計）");
-        text.append("\n現在の音声設定\n").append(audioObservation)
-            .append("\n比較: 参加前の最新観測\n").append(beforeJoin)
-            .append("\n比較: 参加中の最新観測\n").append(duringJoin)
-            .append("\n比較: 退出後の最新観測\n").append(afterLeave)
-            .append("\n※OS報告の録音デバイスは取得可能な構成です。WebViewのマイク経路を確定する表示ではありません。");
-        for (String event : diagnosticEvents) text.append("\n").append(event);
-        diagnosticView.setText(text.toString());
-    }
-
-    @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        recordKey("画面", event);
-        if (joined && isToggleKey(event.getKeyCode())) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) toggleFromHeadset();
             return true;
-        }
-        return super.dispatchKeyEvent(event);
-    }
-
-    private void toggleFromHeadset() {
-        runOnUiThread(() -> {
-            if (!joined || webView == null) {
-                recordDiagnostic("切替を見送り: ルーム未参加"); return;
-            }
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (now - lastButtonTime < 350) {
-                recordDiagnostic("切替を見送り: 350ms以内の重複"); return;
-            }
-            lastButtonTime = now;
-            webView.evaluateJavascript("(() => { if (typeof window.intercomNativeToggle !== 'function') return 'missing'; window.intercomNativeToggle(); return 'called'; })()",
-                result -> recordDiagnostic("Web画面へ切替要求: " + result));
         });
+        latch = button(root, "送信を開始（もう一度押すと停止）", v -> { if (service != null) service.toggleTalking(); render(); });
+        button(root, "Bluetooth接続を再確認", v -> { if (service != null) service.selectAudioRoute(); render(); });
+        leave = button(root, "退出", v -> { if (service != null) service.leave(); render(); });
+        TextView help = new TextView(this);
+        help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\nS10操作ON：通話ボタンで送信開始、もう一度押すと停止。\n停止後は次の操作の準備に約1秒かかります。イヤホン側で待機音が鳴る場合があります。");
+        help.setPadding(0, pad, 0, 0); root.addView(help);
+        ScrollView scroll = new ScrollView(this); scroll.addView(root); setContentView(scroll); render();
     }
-
-    private void stopFromHeadset() {
-        runOnUiThread(() -> {
-            if (joined && talking && webView != null) {
-                webView.evaluateJavascript("window.intercomNativeStop?.()", null);
-            }
-        });
+    private Button button(LinearLayout root, String text, View.OnClickListener click) {
+        Button b = new Button(this); b.setText(text); if (click != null) b.setOnClickListener(click);
+        root.addView(b, new LinearLayout.LayoutParams(-1, -2)); return b;
     }
-
-    private void updateSession() {
-        if (mediaSession == null) return;
-        boolean active = joined && foreground && webView != null;
-        if (active && !hasAudioFocus) {
-            hasAudioFocus = audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
-            focusStatus = hasAudioFocus ? "取得成功" : "取得失敗";
-        } else if (!active && hasAudioFocus) {
-            audioManager.abandonAudioFocusRequest(audioFocusRequest);
-            hasAudioFocus = false;
-            focusStatus = "解放";
+    private void requestJoin() {
+        if (!room.getText().toString().trim().matches("[a-zA-Z0-9_-]{1,32}")) {
+            Toast.makeText(this, "ルームIDは半角英数字・_・- の32文字以内です", Toast.LENGTH_LONG).show(); return;
         }
-        if (active && hasAudioFocus) startControlPlayback();
-        else stopControlPlayback();
-        mediaSession.setPlaybackState(new PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_STOP)
-            .setState(active ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_STOPPED, 0, 1f).build());
-        mediaSession.setActive(active);
+        if (name.length() > 40) { Toast.makeText(this, "名前は40文字以内です", Toast.LENGTH_LONG).show(); return; }
+        ArrayList<String> permissions = new ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) permissions.add(Manifest.permission.RECORD_AUDIO);
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) permissions.add(Manifest.permission.BLUETOOTH_CONNECT);
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        if (!permissions.isEmpty()) { requestPermissions(permissions.toArray(new String[0]), 100); return; }
+        startSession();
     }
-
-    private void startControlPlayback() {
-        if (controlPlayback != null) return;
-        final int sampleRate = 16000;
-        AudioTrack track = null;
-        try {
-            track = new AudioTrack.Builder()
-                .setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAudioFormat(new AudioFormat.Builder()
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setBufferSizeInBytes(sampleRate * 2)
-                .build();
-            // MODE_STATIC starts in STATE_NO_STATIC_DATA until PCM is written.
-            int initialState = track.getState();
-            if (initialState == AudioTrack.STATE_UNINITIALIZED) {
-                playbackStatus = "作成失敗: state=" + initialState;
-                track.release();
-                return;
-            }
-            int written = track.write(new short[sampleRate], 0, sampleRate);
-            int loadedState = track.getState();
-            if (written != sampleRate || loadedState != AudioTrack.STATE_INITIALIZED) {
-                playbackStatus = "書込失敗: write=" + written + " state=" + loadedState;
-                track.release();
-                return;
-            }
-            int loopResult = track.setLoopPoints(0, sampleRate, -1);
-            if (loopResult != AudioTrack.SUCCESS) {
-                playbackStatus = "ループ設定失敗: code=" + loopResult;
-                track.release();
-                return;
-            }
-            track.setVolume(0f);
-            track.play();
-            controlPlayback = track;
-            playbackStatus = "再生中";
-        } catch (RuntimeException e) {
-            if (track != null) track.release();
-            playbackStatus = "失敗: " + e.getClass().getSimpleName();
-            Log.w("StaffIntercom", "Could not start media control playback", e);
+    private void startSession() {
+        getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();
+        Intent intent = new Intent(this, IntercomService.class).setAction(IntercomService.JOIN)
+            .putExtra("room", room.getText().toString().trim()).putExtra("name", name.getText().toString().trim()).putExtra("headsetCalls", headsetMode.isChecked());
+        startForegroundService(intent);
+    }
+    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(code, permissions, results);
+        if (code != 100) return;
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "マイクの許可が必要です", Toast.LENGTH_LONG).show(); return;
         }
+        startSession();
     }
-
-    private void stopControlPlayback() {
-        if (controlPlayback == null) return;
-        controlPlayback.stop();
-        controlPlayback.release();
-        controlPlayback = null;
-        playbackStatus = "停止";
+    private void render() {
+        if (status == null) return;
+        boolean active = service != null && service.isJoined();
+        boolean connected = active && service.isConnected();
+        status.setText(service == null ? "未参加" : service.getStatus());
+        route.setText(service == null ? "音声出力：未接続" : service.getRoute());
+        headsetState.setText(service == null ? "" : service.getHeadsetStatus());
+        join.setEnabled(!active); room.setEnabled(!active); name.setEnabled(!active);
+        leave.setEnabled(active); ptt.setEnabled(connected); latch.setEnabled(connected);
+        boolean talking = active && service.isTalking();
+        latch.setText(talking ? "送信を停止" : "送信を開始（もう一度押すと停止）");
+        ptt.setText(talking ? "● 送信中" : "押しながら話す");
     }
-
-    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
-        super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != AUDIO_PERMISSION) return;
-        boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
-        microphoneEvent = granted ? "Android権限を許可" : "Android権限を拒否";
-        if (pendingAudioRequest != null) {
-            if (granted) {
-                pendingAudioRequest.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-                microphoneEvent = "WebViewマイク許可済み";
-            }
-            else pendingAudioRequest.deny();
-            pendingAudioRequest = null;
-        }
-        if (!granted) {
-            Toast.makeText(this, "マイクを許可してください。拒否した場合は端末の設定 → アプリ → スタッフインカム → 権限から変更できます。", Toast.LENGTH_LONG).show();
-        }
-        loadWebApp();
-    }
-
+    @Override protected void onStart() { super.onStart(); bound = bindService(new Intent(this, IntercomService.class), connection, BIND_AUTO_CREATE); handler.post(refresh); }
     @Override protected void onStop() {
-        foreground = false;
-        if (webView != null) webView.evaluateJavascript("window.intercomNativeStop?.()", null);
-        updateSession();
-        super.onStop();
-    }
-
-    @Override protected void onStart() {
-        super.onStart();
-        foreground = true;
-        updateSession();
-    }
-
-    @Override protected void onDestroy() {
-        if (TestCallService.isTesting()) TestCallService.finish("画面終了に伴いテスト終了", android.telecom.DisconnectCause.LOCAL);
-        TestCallService.setListener(null);
-        diagnosticHandler.removeCallbacksAndMessages(null);
-        joined = false;
-        if (pendingAudioRequest != null) pendingAudioRequest.deny();
-        mediaSession.setActive(false);
-        stopControlPlayback();
-        if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest);
-        mediaSession.release();
-        if (webView != null) { webView.destroy(); webView = null; }
-        super.onDestroy();
+        // A press-and-hold ends if the UI disappears. A latched transmission remains under user control.
+        if (holding && service != null) service.setTalking(false);
+        holding = false; handler.removeCallbacksAndMessages(null);
+        if (bound) { unbindService(connection); bound = false; }
+        service = null; super.onStop();
     }
 }
