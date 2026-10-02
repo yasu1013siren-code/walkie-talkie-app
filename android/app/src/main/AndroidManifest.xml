@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <application android:label="スタッフインカム試験版" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+    <application android:label="スタッフインカム" android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false" android:allowBackup="false">
         <service android:name=".IntercomService" android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback|phoneCall" />

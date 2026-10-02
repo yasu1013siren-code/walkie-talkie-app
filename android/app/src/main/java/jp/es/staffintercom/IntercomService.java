@@ -35,6 +35,7 @@ public final class IntercomService extends Service {
     private AudioManager audio;
     private AudioFocusRequest focus;
     private boolean hasFocus, joined, connected, talking, initialized, headsetCalls;
+    private float receiveGain = 2f;
     private String headsetStatus = "S10：ボタン操作OFF";
     private String room = "", userName = "", status = "未参加", route = "音声出力：未接続";
     private MediaSession mediaSession;
@@ -50,6 +51,15 @@ public final class IntercomService extends Service {
     String getRoute() { return route; }
     String getHeadsetStatus() { return headsetStatus; }
     boolean usesHeadsetCalls() { return headsetCalls; }
+    float getReceiveGain() { return receiveGain; }
+    void setReceiveGain(float value) {
+        receiveGain = normalizeReceiveGain(value);
+        getSharedPreferences("intercom", MODE_PRIVATE).edit().putFloat("receiveGain", receiveGain).apply();
+        for (Peer peer : peers.values()) if (peer.remoteAudio != null) peer.remoteAudio.setVolume(receiveGain);
+    }
+    static float normalizeReceiveGain(float value) {
+        return Float.isFinite(value) ? Math.max(1f, Math.min(3f, value)) : 2f;
+    }
     private final IntercomCallService.Client callClient = new IntercomCallService.Client() {
         public boolean transmit(boolean value) { setTalking(value); return talking == value; }
         public boolean isTransmitting() { return talking; }
@@ -73,6 +83,7 @@ public final class IntercomService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        receiveGain = normalizeReceiveGain(getSharedPreferences("intercom", MODE_PRIVATE).getFloat("receiveGain", 2f));
         audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL, "インカム通話", NotificationManager.IMPORTANCE_LOW));
         focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -229,10 +240,10 @@ public final class IntercomService extends Service {
         void failed(String error) { main.post(() -> { if (peer.live()) { status = "音声接続に失敗しました。退出して再参加してください"; updateNotification(); android.util.Log.w("StaffIntercom", error); } }); }
     }
     private final class Peer implements PeerConnection.Observer {
-        final String id, name; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
+        final String id, name; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
         Peer(String id, String name) { this.id = id; this.name = name; }
         boolean live() { return joined && peers.get(id) == this && pc != null; }
-        void close() { if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
+        void close() { remoteAudio = null; if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
         public void onIceCandidate(IceCandidate candidate) { main.post(() -> sendSignal(this, json("candidate", candidate.sdp, "sdpMid", candidate.sdpMid, "sdpMLineIndex", candidate.sdpMLineIndex))); }
         public void onConnectionChange(PeerConnection.PeerConnectionState state) {
             main.post(() -> { if (live() && state == PeerConnection.PeerConnectionState.FAILED) { status = "音声接続に失敗しました。ネットワークを確認し、再参加してください"; updateNotification(); } });
@@ -246,7 +257,17 @@ public final class IntercomService extends Service {
         public void onRemoveStream(MediaStream stream) {}
         public void onDataChannel(DataChannel channel) {}
         public void onRenegotiationNeeded() {}
-        public void onAddTrack(RtpReceiver receiver, MediaStream[] streams) {}
+        public void onTrack(RtpTransceiver transceiver) { onAddTrack(transceiver.getReceiver(), new MediaStream[0]); }
+        public void onAddTrack(RtpReceiver receiver, MediaStream[] streams) {
+            main.post(() -> {
+                if (!live()) return;
+                MediaStreamTrack received = receiver.track();
+                if (received instanceof AudioTrack) {
+                    remoteAudio = (AudioTrack) received;
+                    remoteAudio.setVolume(receiveGain);
+                }
+            });
+        }
     }
     void selectAudioRoute() {
         if (!joined || IntercomCallService.isInterrupted()) return;

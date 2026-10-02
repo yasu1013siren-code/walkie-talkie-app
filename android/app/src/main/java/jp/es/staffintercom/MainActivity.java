@@ -14,7 +14,8 @@ public final class MainActivity extends Activity {
     private IntercomService service;
     private boolean bound, holding;
     private EditText room, name;
-    private TextView status, route, headsetState;
+    private TextView status, route, headsetState, gainLabel;
+    private SeekBar gainControl;
     private CheckBox headsetMode;
     private Button join, leave, latch, ptt;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -34,13 +35,13 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (20 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
-        TextView title = new TextView(this); title.setText("スタッフインカム 0.2.2\nバックグラウンド通話・試験版"); title.setTextSize(23); root.addView(title);
+        TextView title = new TextView(this); title.setText("スタッフインカム " + BuildConfig.VERSION_NAME + "\nバックグラウンド通話"); title.setTextSize(23); root.addView(title);
         room = new EditText(this); room.setSingleLine(true); room.setHint("ルームID（例：es）");
         name = new EditText(this); name.setSingleLine(true); name.setHint("名前");
         android.content.SharedPreferences prefs = getSharedPreferences("intercom", MODE_PRIVATE);
         room.setText(prefs.getString("room", "es")); name.setText(prefs.getString("name", ""));
         root.addView(room); root.addView(name);
-        headsetMode = new CheckBox(this); headsetMode.setText("S10ボタン操作を使う（試験）");
+        headsetMode = new CheckBox(this); headsetMode.setText("イヤホンの通話ボタンを使う");
         headsetMode.setChecked(prefs.getBoolean("headsetCalls", false));
         headsetMode.setOnCheckedChangeListener((button, checked) -> {
             getSharedPreferences("intercom", MODE_PRIVATE).edit().putBoolean("headsetCalls", checked).apply();
@@ -51,6 +52,24 @@ public final class MainActivity extends Activity {
         status = new TextView(this); status.setTextSize(18); status.setPadding(0, pad, 0, pad); root.addView(status);
         route = new TextView(this); route.setTextSize(15); root.addView(route);
         headsetState = new TextView(this); root.addView(headsetState);
+        gainLabel = new TextView(this); root.addView(gainLabel);
+        gainControl = new SeekBar(this); gainControl.setMax(4);
+        float savedGain = IntercomService.normalizeReceiveGain(prefs.getFloat("receiveGain", 2f));
+        gainControl.setProgress(Math.round((savedGain - 1f) * 2));
+        gainLabel.setText("受信音声の増幅：" + savedGain + "倍（音割れ時は下げてください）");
+        gainControl.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                float gain = 1f + progress * 0.5f;
+                gainLabel.setText("受信音声の増幅：" + gain + "倍（音割れ時は下げてください）");
+                if (fromUser) {
+                    prefs.edit().putFloat("receiveGain", gain).apply();
+                    if (service != null) service.setReceiveGain(gain);
+                }
+            }
+            public void onStartTrackingTouch(SeekBar bar) {}
+            public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        root.addView(gainControl);
         ptt = button(root, "押しながら話す", null);
         ptt.setOnTouchListener((v, event) -> {
             if (service == null) return false;
@@ -64,7 +83,7 @@ public final class MainActivity extends Activity {
         button(root, "Bluetooth接続を再確認", v -> { if (service != null) service.selectAudioRoute(); render(); });
         leave = button(root, "退出", v -> { if (service != null) service.leave(); render(); });
         TextView help = new TextView(this);
-        help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\nS10操作ON：通話ボタンで送信開始、もう一度押すと停止。\n停止後は次の操作の準備に約1秒かかります。イヤホン側で待機音が鳴る場合があります。");
+        help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\n通話ボタン操作ON：通話ボタンで送信開始、もう一度押すと停止。\n停止後は次の操作の準備に約1秒かかります。イヤホン側で待機音が鳴る場合があります。");
         help.setPadding(0, pad, 0, 0); root.addView(help);
         ScrollView scroll = new ScrollView(this); scroll.addView(root); setContentView(scroll); render();
     }
