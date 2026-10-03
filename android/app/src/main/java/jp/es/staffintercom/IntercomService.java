@@ -21,13 +21,23 @@ import java.util.*;
 /** Native audio and signaling owner; no WebView or Activity is needed for a joined session. */
 public final class IntercomService extends Service {
     static final String JOIN = "jp.es.staffintercom.JOIN", TOGGLE = "jp.es.staffintercom.TOGGLE", STOP = "jp.es.staffintercom.STOP";
-    private static final String SITE = "https://walkie-talkie-app-42l7.onrender.com";
+    private static final String SITE = BuildConfig.SERVER_URL;
     private static final String CHANNEL = "intercom-session";
     private static final int NOTICE = 2001;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LocalBinder binder = new LocalBinder();
     private final Map<String, Peer> peers = new LinkedHashMap<>();
     private Socket socket;
+    private String storeId = "", inviteCode = "";
+    private boolean joinSent;
+    private List<PeerConnection.IceServer> iceServers = RtcSettings.defaults();
+    private final Runnable refreshIce = new Runnable() {
+        public void run() {
+            if (!joined) return;
+            if (connected && socket != null) socket.emit("request-rtc-config");
+            main.postDelayed(this, 600000);
+        }
+    };
     private PeerConnectionFactory factory;
     private JavaAudioDeviceModule audioModule;
     private AudioSource source;
@@ -132,6 +142,8 @@ public final class IntercomService extends Service {
         if (JOIN.equals(intent.getAction()) && !joined) {
             String nextRoom = intent.getStringExtra("room");
             if (nextRoom == null || !nextRoom.matches("[a-zA-Z0-9_-]{1,32}") || checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopSelf(); return START_NOT_STICKY; }
+            storeId = intent.getStringExtra("storeId"); inviteCode = intent.getStringExtra("inviteCode");
+            if (storeId == null) storeId = ""; if (inviteCode == null) inviteCode = "";
             room = nextRoom; userName = intent.getStringExtra("name");
             if (userName == null || userName.length() > 40) userName = "";
             status = "接続中…";
@@ -144,7 +156,7 @@ public final class IntercomService extends Service {
                 selectAudioRoute();
                 initializeAudio(); setHeadsetCalls(intent.getBooleanExtra("headsetCalls", false)); connect(); updateNotification();
             } catch (Throwable error) {
-                android.util.Log.e("StaffIntercom", "Session start failed", error);
+                android.util.Log.e("StaffIntercom", "Session start failed");
                 leave(); status = "参加できませんでした：" + error.getClass().getSimpleName();
             }
         }
@@ -159,6 +171,8 @@ public final class IntercomService extends Service {
             throw new SecurityException("Native WebRTC requires network-state permissions");
         }
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this).createInitializationOptions());
+        // Native ICE logs can include temporary credentials and connection addresses.
+        Logging.enableLogToDebugOutput(Logging.Severity.LS_NONE);
         audioModule = JavaAudioDeviceModule.builder(this).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();
         source = factory.createAudioSource(new MediaConstraints());
@@ -169,10 +183,33 @@ public final class IntercomService extends Service {
         IO.Options options = new IO.Options(); options.transports = new String[]{"websocket"}; options.reconnection = true;
         options.reconnectionDelay = 1000; options.reconnectionDelayMax = 5000; options.timeout = 20000;
         final Socket current = IO.socket(URI.create(SITE), options); socket = current;
-        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = true; closePeers(); setTalking(false); current.emit("join-room", json("roomId", room, "name", userName)); IntercomCallService.setConnected(true); updateStatus(); });
+        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = false; closePeers(); setTalking(false); iceServers = RtcSettings.defaults(); joinSent = false;
+            if (storeId.isEmpty()) emitJoin(current);
+            else main.postDelayed(() -> {
+                if (joined && socket == current && generation == session && current.connected() && !joinSent) { leave(); status = "このサーバーは店舗参加に対応していません"; }
+            }, 5000); IntercomCallService.setConnected(false); status = "参加を確認中…"; updateNotification(); });
         listen(current, session, Socket.EVENT_DISCONNECT, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); closePeers(); status = "通信が切れました。再接続中…"; updateNotification(); });
         listen(current, session, Socket.EVENT_CONNECT_ERROR, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); status = "サーバー接続を再試行中…"; updateNotification(); });
+        listen(current, session, "server-capabilities", args -> {
+            if (((JSONObject) args[0]).optInt("accessProtocol") == 1 && !storeId.isEmpty() && !joinSent) emitJoin(current);
+        });
+        listen(current, session, "join-error", args -> {
+            String code = ((JSONObject) args[0]).optString("code");
+            leave(); status = "ROOM_FULL".equals(code) ? "ルームが満員です" : "RETRY_LATER".equals(code) ? "少し待ってから参加してください" : "参加できません。店舗ID・招待コード・有効期限を確認してください";
+        });
+        listen(current, session, "rtc-config", args -> {
+            try {
+                iceServers = RtcSettings.parse((JSONObject) args[0]);
+                for (Peer peer : peers.values()) if (peer.pc != null) {
+                    PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(iceServers);
+                    config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
+                    if (!peer.pc.setConfiguration(config)) { leave(); status = "接続設定を更新できません。再参加してください"; return; }
+                }
+            } catch (JSONException invalid) { leave(); status = "接続設定が不正です。管理者に確認してください"; }
+        });
         listen(current, session, "existing-users", args -> {
+            connected = true; IntercomCallService.setConnected(true);
+            main.removeCallbacks(refreshIce); main.postDelayed(refreshIce, 600000);
             JSONArray users = (JSONArray) args[0];
             for (int i = 0; i < users.length(); i++) { JSONObject user = users.optJSONObject(i); if (user != null) createPeer(user.optString("id"), user.optString("name"), true); }
             updateStatus();
@@ -182,18 +219,22 @@ public final class IntercomService extends Service {
         listen(current, session, "signal", args -> receiveSignal((JSONObject) args[0]));
         current.connect();
     }
+    private void emitJoin(Socket current) {
+        joinSent = true;
+        current.emit("join-room", json("roomId", room, "name", userName, "storeId", storeId, "inviteCode", inviteCode));
+    }
     private interface Event { void accept(Object[] args); }
     private void listen(Socket current, int session, String event, Event callback) {
         current.on(event, args -> main.post(() -> {
             if (!joined || socket != current || generation != session) return;
-            try { callback.accept(args); } catch (RuntimeException e) { android.util.Log.w("StaffIntercom", "Invalid signal: " + event, e); }
+            try { callback.accept(args); } catch (RuntimeException e) { android.util.Log.w("StaffIntercom", "Invalid signaling event"); }
         }));
     }
     private Peer createPeer(String id, String name, boolean offer) {
         if (id.isEmpty()) return null;
         if (peers.containsKey(id)) return peers.get(id);
         Peer p = new Peer(id, name); peers.put(id, p);
-        List<PeerConnection.IceServer> ice = Arrays.asList(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(), PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer());
+        List<PeerConnection.IceServer> ice = iceServers;
         PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(ice);
         config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
         p.pc = factory.createPeerConnection(config, p);
@@ -237,7 +278,7 @@ public final class IntercomService extends Service {
         public void onSetSuccess() { main.post(() -> { if (peer.live()) set(); }); }
         public void onCreateFailure(String error) { failed(error); }
         public void onSetFailure(String error) { failed(error); }
-        void failed(String error) { main.post(() -> { if (peer.live()) { status = "音声接続に失敗しました。退出して再参加してください"; updateNotification(); android.util.Log.w("StaffIntercom", error); } }); }
+        void failed(String error) { main.post(() -> { if (peer.live()) { status = "音声接続に失敗しました。退出して再参加してください"; updateNotification(); android.util.Log.w("StaffIntercom", "Peer negotiation failed"); } }); }
     }
     private final class Peer implements PeerConnection.Observer {
         final String id, name; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
@@ -328,6 +369,7 @@ public final class IntercomService extends Service {
     private static JSONObject json(Object... pairs) { JSONObject out = new JSONObject(); try { for (int i = 0; i < pairs.length; i += 2) out.put((String) pairs[i], pairs[i + 1]); } catch (JSONException e) { throw new IllegalArgumentException(e); } return out; }
     private void closePeers() { List<Peer> old = new ArrayList<>(peers.values()); peers.clear(); for (Peer peer : old) peer.close(); }
     void leave() {
+        main.removeCallbacks(refreshIce); inviteCode = ""; storeId = ""; iceServers = RtcSettings.defaults();
         IntercomCallService.disable(); headsetStatus = "S10：ボタン操作OFF";
         setTalking(false); joined = false; connected = false; generation++;
         if (socket != null) { socket.emit("leave-room"); socket.off(); socket.disconnect(); socket = null; }

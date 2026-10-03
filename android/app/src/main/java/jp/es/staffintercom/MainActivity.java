@@ -13,7 +13,7 @@ import java.util.ArrayList;
 public final class MainActivity extends Activity {
     private IntercomService service;
     private boolean bound, holding;
-    private EditText room, name;
+    private EditText room, name, store, invite;
     private TextView status, route, headsetState, gainLabel;
     private SeekBar gainControl;
     private CheckBox headsetMode;
@@ -41,6 +41,12 @@ public final class MainActivity extends Activity {
         android.content.SharedPreferences prefs = getSharedPreferences("intercom", MODE_PRIVATE);
         room.setText(prefs.getString("room", "es")); name.setText(prefs.getString("name", ""));
         root.addView(room); root.addView(name);
+        store = new EditText(this); store.setSingleLine(true); store.setHint("店舗ID（従来ルームは空欄）");
+        store.setText(prefs.getString("storeId", "")); root.addView(store);
+        invite = new EditText(this); invite.setSingleLine(true); invite.setHint("招待コード（保存されません）");
+        invite.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        invite.setSaveEnabled(false); invite.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        root.addView(invite);
         headsetMode = new CheckBox(this); headsetMode.setText("イヤホンの通話ボタンを使う");
         headsetMode.setChecked(prefs.getBoolean("headsetCalls", false));
         headsetMode.setOnCheckedChangeListener((button, checked) -> {
@@ -95,6 +101,10 @@ public final class MainActivity extends Activity {
         if (!room.getText().toString().trim().matches("[a-zA-Z0-9_-]{1,32}")) {
             Toast.makeText(this, "ルームIDは半角英数字・_・- の32文字以内です", Toast.LENGTH_LONG).show(); return;
         }
+        String storeId = store.getText().toString().trim();
+        if (!storeId.isEmpty() && (!storeId.matches("[a-zA-Z0-9_-]{1,32}") || invite.length() < 32 || invite.length() > 256)) {
+            Toast.makeText(this, "店舗IDと招待コードを確認してください", Toast.LENGTH_LONG).show(); return;
+        }
         if (name.length() > 40) { Toast.makeText(this, "名前は40文字以内です", Toast.LENGTH_LONG).show(); return; }
         ArrayList<String> permissions = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) permissions.add(Manifest.permission.RECORD_AUDIO);
@@ -104,9 +114,11 @@ public final class MainActivity extends Activity {
         startSession();
     }
     private void startSession() {
-        getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();
+        getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("storeId", store.getText().toString().trim()).putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();
         Intent intent = new Intent(this, IntercomService.class).setAction(IntercomService.JOIN)
-            .putExtra("room", room.getText().toString().trim()).putExtra("name", name.getText().toString().trim()).putExtra("headsetCalls", headsetMode.isChecked());
+            .putExtra("room", room.getText().toString().trim()).putExtra("name", name.getText().toString().trim()).putExtra("headsetCalls", headsetMode.isChecked())
+            .putExtra("storeId", store.getText().toString().trim()).putExtra("inviteCode", invite.getText().toString());
+        invite.setText("");
         startForegroundService(intent);
     }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
@@ -124,7 +136,7 @@ public final class MainActivity extends Activity {
         status.setText(service == null ? "未参加" : service.getStatus());
         route.setText(service == null ? "音声出力：未接続" : service.getRoute());
         headsetState.setText(service == null ? "" : service.getHeadsetStatus());
-        join.setEnabled(!active); room.setEnabled(!active); name.setEnabled(!active);
+        join.setEnabled(!active); room.setEnabled(!active); name.setEnabled(!active); store.setEnabled(!active); invite.setEnabled(!active);
         leave.setEnabled(active); ptt.setEnabled(connected); latch.setEnabled(connected);
         boolean talking = active && service.isTalking();
         latch.setText(talking ? "送信を停止" : "送信を開始（もう一度押すと停止）");

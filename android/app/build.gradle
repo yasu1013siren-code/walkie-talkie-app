@@ -2,12 +2,20 @@ plugins {
     id 'com.android.application'
 }
 
+// Public HTTPS endpoint only; never put credentials into a build constant.
+def intercomServerUrl = System.getenv('INTERCOM_SERVER_URL') ?: 'https://walkie-talkie-app-42l7.onrender.com'
+try {
+    def endpoint = new URI(intercomServerUrl)
+    if (endpoint.scheme != 'https' || !endpoint.host || endpoint.userInfo || endpoint.query || endpoint.fragment || !(endpoint.path in ['', '/'])) throw new Exception()
+} catch (Exception ignored) { throw new GradleException('INTERCOM_SERVER_URL must be an HTTPS origin without credentials') }
+
 android {
     namespace 'jp.es.staffintercom'
     compileSdk 35
 
     defaultConfig {
         applicationId 'jp.es.staffintercom.preview'
+        buildConfigField 'String', 'SERVER_URL', '"' + intercomServerUrl + '"'
         minSdk 26
         targetSdk 35
         versionCode 18

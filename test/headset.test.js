@@ -18,7 +18,8 @@ test('headset media actions turn transmission on and off, and leaving clears han
   };
   const microphone = { enabled: false, stop() {} };
   const stream = { getAudioTracks: () => [microphone], getTracks: () => [microphone] };
-  const socket = { connected: true, on() {}, emit() {} };
+  const events = {};
+  const socket = { connected: true, on(name, callback) { events[name] = callback; }, emit() {} };
   let now = 1000;
   const context = {
     io: () => socket,
@@ -32,12 +33,15 @@ test('headset media actions turn transmission on and off, and leaving clears han
     MediaMetadata: class {},
     Option: class { constructor(label, value) { this.label = label; this.value = value; } },
     Date: { now: () => (now += 500) },
-    console
+    console, setInterval() {}, setTimeout() {}, clearTimeout() {}
   };
   vm.runInNewContext(readFileSync('public/client.js', 'utf8'), context);
   element('roomInput').value = 'es';
   await element('joinBtn').events.click();
   assert.equal(microphone.enabled, false);
+  handlers.play();
+  assert.equal(microphone.enabled, false); // Server has not admitted us yet.
+  await events['existing-users']([]);
   handlers.play();
   assert.equal(microphone.enabled, true);
   handlers.pause();

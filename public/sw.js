@@ -1,4 +1,4 @@
-const CACHE = 'intercom-shell-v2';
+const CACHE = 'intercom-shell-v3';
 const ASSETS = ['/', '/style.css', '/client.js', '/manifest.webmanifest', '/icon.svg'];
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
