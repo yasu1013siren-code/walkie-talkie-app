@@ -36,3 +36,7 @@
 運営者の正式名称・連絡先、適用日、委託先、所在国と保持期間、ログへの秘密情報の混入防止、事故時対応、利用対象年齢、ストアのData safety申告を確定します。「情報を一切収集しない」とは申告しません。音声・識別子等について一時的処理や共有の扱いを最新のPlay Console説明と実運用で照合します。
 
 参考：[Google Play User Data](https://support.google.com/googleplay/android-developer/answer/10144311)、[Data safety](https://support.google.com/googleplay/android-developer/answer/10787469)。最終公開内容は運営者の実運用と一致させます。
+
+## 購入確認追加分（未公開草案）
+
+Play IntegrityによりGoogleへアプリ/端末の完全性判定を求め、サーバーで利用権、パッケージ、署名証明書、バージョン、要求のハッシュ、時刻を検証する。招待コード原文や音声を購入確認のためにGoogleへ送信しない。トークンは認可要求の処理中だけメモリに保持し、独自ログ/永続保存しない。ホスティング/Google側の処理、保持、Data safety申告はConsoleと各社規約を確認して確定する。Cloudflare導入時には委託先と接続メタデータの説明を更新する。

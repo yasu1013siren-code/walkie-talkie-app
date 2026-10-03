@@ -31,3 +31,7 @@
 [User Data](https://support.google.com/googleplay/android-developer/answer/10144311)、[Foreground service要件](https://support.google.com/googleplay/android-developer/answer/13392821) に従い、マイク利用の説明・通知・プライバシーポリシー・Data safety・必要なFGS申告とデモを準備する。使用しているmicrophone/mediaPlayback/phoneCallの用途を説明し、審査承認を前提にしない。
 
 AAB、Play App Signingと既存配布鍵の扱い、versionCode更新、16KBページサイズ等のネイティブライブラリ互換性、ライセンス一覧、課金・購入確認、スクリーンショットとサポート体制は販売前に確認する。既存の秘密鍵を再作成しない。デバッグAPKは販売用成果物ではない。
+
+## 有料Play版の追加説明案（未承認）
+
+利用するGoogle Playアカウントごとに購入が必要です。ルーム参加時にオンラインでGoogle Play利用権と店舗招待を確認します。既存のサイドロードAPKとWebは販売用ルームに参加できません。連続接続は最大8時間または招待期限までで、再参加時に購入確認します。価格・提供期間・返金/サービス終了条件はPRICING_OPTIONS.mdを参照して決定後に確定してください。

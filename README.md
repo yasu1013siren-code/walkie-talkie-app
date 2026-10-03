@@ -116,3 +116,12 @@ walkie-talkie-app/
 - [実機試験手順](docs/sales/DEVICE_TEST_PLAN.md)
 - [運用費用](docs/sales/OPERATIONS_COSTS.md)
 - [検証結果](docs/sales/VALIDATION.md)
+
+### 販売準備の続き（API36 / Google Play購入確認）
+
+- `docs/sales/API36_REVIEW.md`：API36と権限・背景サービスの影響。
+- `docs/sales/PLAY_LICENSE_SETUP.md`：Play Integrityの設定と未完了のConsole試験。
+- `docs/sales/PRICING_OPTIONS.md` / `TURN_COMPARISON.md`：未承認の価格候補、人数別採算、TURN契約準備。
+- `docs/sales/CONTACT_SETUP.md`：確認済み事業用問い合わせ先の設定。
+
+このブランチのサーバーは既定で購入確認を必須とします。開発回帰試験だけは `NODE_ENV=development npm start` を明示してください。販売用では `NODE_ENV=production` と必要なPlay設定、`ALLOW_LEGACY_ROOMS=false` を使用し、Debug APKやWebを購入確認の代替にしないでください。main/本番へはまだ反映していません。

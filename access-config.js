@@ -23,7 +23,7 @@ function loadConfig(env = process.env) {
     if (!Array.isArray(urls) || urls.some(u => typeof u !== 'string' || !/^turns?:[^\s/@]+(?::\d+)?(?:\?transport=(?:udp|tcp))?$/.test(u))) throw Error();
     const secret = env.TURN_SHARED_SECRET || '';
     if (Boolean(urls.length) !== Boolean(secret) || (secret && secret.length < 32)) throw Error();
-    const ttl = Number(env.TURN_CREDENTIAL_TTL || 3600);
+    const ttl = Number(env.TURN_CREDENTIAL_TTL || (env.TURN_PROVIDER === 'cloudflare' ? 32400 : 3600));
     if (!Number.isInteger(ttl) || ttl < 1200 || ttl > 86400) throw Error();
     return { rooms, legacy: env.ALLOW_LEGACY_ROOMS !== 'false', urls, secret, ttl };
   } catch (_) { throw new Error('Invalid access/TURN configuration; check deployment settings'); }

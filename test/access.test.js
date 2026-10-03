@@ -46,7 +46,7 @@ test('configuration fails closed without echoing secrets; invites scoped and exp
 
 test('real sockets: admission, ICE before peers, capacity, tenant isolation, rejoin, refresh, limits', async () => {
   const env = environment(); const port = 40000 + Math.floor(Math.random() * 10000);
-  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, ...env, PORT: String(port) } });
+  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, NODE_ENV: 'test', ...env, PORT: String(port) } });
   let logs = ''; server.stderr.on('data', data => logs += data); server.stdout.on('data', data => logs += data);
   const clients = [];
   try {
@@ -79,7 +79,7 @@ test('real sockets: admission, ICE before peers, capacity, tenant isolation, rej
 
 test('active membership is removed when the invite expires', async () => {
   const port = 50000 + Math.floor(Math.random() * 5000);
-  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port), ACCESS_POLICY_JSON: policy(new Date(Date.now() + 2200).toISOString()), ALLOW_LEGACY_ROOMS: 'false', TURN_URLS: '[]', TURN_SHARED_SECRET: '' } });
+  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, NODE_ENV: 'test', PORT: String(port), ACCESS_POLICY_JSON: policy(new Date(Date.now() + 2200).toISOString()), ALLOW_LEGACY_ROOMS: 'false', TURN_URLS: '[]', TURN_SHARED_SECRET: '' } });
   let socket;
   try {
     await new Promise((resolve, reject) => { server.stdout.once('data', resolve); server.once('error', reject); server.once('exit', () => reject(Error('server failed'))); });

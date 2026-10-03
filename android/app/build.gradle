@@ -9,15 +9,19 @@ try {
     if (endpoint.scheme != 'https' || !endpoint.host || endpoint.userInfo || endpoint.query || endpoint.fragment || !(endpoint.path in ['', '/'])) throw new Exception()
 } catch (Exception ignored) { throw new GradleException('INTERCOM_SERVER_URL must be an HTTPS origin without credentials') }
 
+def supportEmail = System.getenv('INTERCOM_SUPPORT_EMAIL') ?: ''
+if (supportEmail && !supportEmail.matches('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}')) throw new GradleException('Invalid INTERCOM_SUPPORT_EMAIL')
+
 android {
     namespace 'jp.es.staffintercom'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'jp.es.staffintercom.preview'
+        buildConfigField 'String', 'SUPPORT_EMAIL', '"' + supportEmail + '"'
         buildConfigField 'String', 'SERVER_URL', '"' + intercomServerUrl + '"'
         minSdk 26
-        targetSdk 35
+        targetSdk 36
         versionCode 18
         versionName '0.2.4'
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
@@ -27,7 +31,11 @@ android {
 
     testOptions {
         unitTests.includeAndroidResources = true
-        unitTests.all { systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2' }
+        unitTests.all {
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            // Robolectric's SDK36 FileDescriptor interceptor needs this Java21 test-only export.
+            jvmArgs '--add-exports=java.base/jdk.internal.access=ALL-UNNAMED'
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -37,6 +45,7 @@ android {
 
 // Pinned native audio and Socket.IO protocol-compatible client.
 dependencies {
+    implementation 'com.google.android.play:integrity:1.6.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.17'
     implementation 'io.github.webrtc-sdk:android:150.7871.01'

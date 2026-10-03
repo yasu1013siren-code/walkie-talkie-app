@@ -14,7 +14,7 @@ import static org.junit.Assert.*;
 import static org.robolectric.Shadows.shadowOf;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 35, shadows = IntercomCallServiceTest.PermittedTelecom.class)
+@Config(sdk = {35, 36}, shadows = IntercomCallServiceTest.PermittedTelecom.class)
 @LooperMode(LooperMode.Mode.PAUSED)
 public class IntercomCallServiceTest {
     @Implements(TelecomManager.class)

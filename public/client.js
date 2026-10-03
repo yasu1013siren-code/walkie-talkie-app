@@ -5,6 +5,7 @@ let peers = {};        // id -> { pc, name }
 let audioElements = {}; // id -> <audio>
 let talking = false;
 let joined = false;
+let playLicenseRequired = false;
 let wakeLock = null;
 let lastHeadsetAction = 0;
 const headsetActions = ['play', 'pause', 'togglemicrophone', 'stop', 'hangup'];
@@ -152,6 +153,7 @@ const defaultIceServers = () => [
 const configuration = { iceServers: defaultIceServers() };
 
 joinBtn.addEventListener('click', async () => {
+  if (playLicenseRequired) { alert('販売用ルームはGoogle Play購入済みAndroidアプリから参加してください'); return; }
   const roomId = roomInput.value.trim();
   const name = nameInput.value.trim();
   if (!roomId) {
@@ -399,6 +401,12 @@ socket.on('join-error', error => {
 setInterval(() => { if (joined && accepted && socket.connected) socket.emit('request-rtc-config'); }, 600000);
 
 socket.on('server-capabilities', capability => {
+  playLicenseRequired = !!capability.playLicenseRequired;
+  if (playLicenseRequired) {
+    leaveBtn.click();
+    alert('販売用ルームはGoogle Play購入済みAndroidアプリから参加してください');
+    return;
+  }
   accessProtocol = capability?.accessProtocol === 1;
   if (joined) submitJoin();
 });

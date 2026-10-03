@@ -178,24 +178,48 @@ public final class IntercomService extends Service {
         source = factory.createAudioSource(new MediaConstraints());
         track = factory.createAudioTrack("intercom-audio", source); track.setEnabled(false); initialized = true;
     }
+    private boolean playLicenseRequired;
+    private int licenseGeneration;
     private void connect() {
         final int session = ++generation;
         IO.Options options = new IO.Options(); options.transports = new String[]{"websocket"}; options.reconnection = true;
         options.reconnectionDelay = 1000; options.reconnectionDelayMax = 5000; options.timeout = 20000;
         final Socket current = IO.socket(URI.create(SITE), options); socket = current;
-        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = false; closePeers(); setTalking(false); iceServers = RtcSettings.defaults(); joinSent = false;
-            if (storeId.isEmpty()) emitJoin(current);
+        listen(current, session, Socket.EVENT_CONNECT, args -> { connected = false; closePeers(); setTalking(false); iceServers = RtcSettings.defaults(); joinSent = false; playLicenseRequired = false; licenseGeneration++;
+            if (storeId.isEmpty() && BuildConfig.DEBUG) emitJoin(current);
             else main.postDelayed(() -> {
                 if (joined && socket == current && generation == session && current.connected() && !joinSent) { leave(); status = "このサーバーは店舗参加に対応していません"; }
-            }, 5000); IntercomCallService.setConnected(false); status = "参加を確認中…"; updateNotification(); });
-        listen(current, session, Socket.EVENT_DISCONNECT, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); closePeers(); status = "通信が切れました。再接続中…"; updateNotification(); });
+            }, 90000); IntercomCallService.setConnected(false); status = "参加を確認中…"; updateNotification(); });
+        listen(current, session, Socket.EVENT_DISCONNECT, args -> { licenseGeneration++; connected = false; IntercomCallService.setConnected(false); setTalking(false); closePeers(); status = "通信が切れました。再接続中…"; updateNotification(); });
         listen(current, session, Socket.EVENT_CONNECT_ERROR, args -> { connected = false; IntercomCallService.setConnected(false); setTalking(false); status = "サーバー接続を再試行中…"; updateNotification(); });
         listen(current, session, "server-capabilities", args -> {
-            if (((JSONObject) args[0]).optInt("accessProtocol") == 1 && !storeId.isEmpty() && !joinSent) emitJoin(current);
+            JSONObject capabilities = (JSONObject) args[0];
+            playLicenseRequired = capabilities.optBoolean("playLicenseRequired");
+            if (!BuildConfig.DEBUG && !playLicenseRequired) { leave(); status = "販売用の購入確認サーバーが必要です"; return; }
+            if (capabilities.optInt("accessProtocol") == 1 && !joinSent) emitJoin(current);
+        });
+        listen(current, session, "license-challenge", args -> {
+            JSONObject challenge = (JSONObject) args[0];
+            final int requestGeneration = ++licenseGeneration;
+            main.postDelayed(() -> {
+                if (joined && socket == current && generation == session && licenseGeneration == requestGeneration && !connected) { leave(); status = "購入確認がタイムアウトしました。再参加してください"; }
+            }, 90000);
+            PlayLicense.request(this, challenge.optLong("cloudProjectNumber"), challenge.optString("requestHash"), new PlayLicense.Callback() {
+                public void success(String token) { main.post(() -> {
+                    if (joined && socket == current && generation == session && licenseGeneration == requestGeneration && current.connected()) {
+                        JSONObject payload = joinPayload();
+                        try { payload.put("integrityToken", token); } catch (JSONException ignored) { return; }
+                        current.emit("join-room", payload);
+                    }
+                }); }
+                public void failure() { main.post(() -> {
+                    if (joined && socket == current && generation == session && licenseGeneration == requestGeneration) { leave(); status = "購入確認に失敗しました。Google Playと通信状態を確認して再参加してください"; }
+                }); }
+            });
         });
         listen(current, session, "join-error", args -> {
             String code = ((JSONObject) args[0]).optString("code");
-            leave(); status = "ROOM_FULL".equals(code) ? "ルームが満員です" : "RETRY_LATER".equals(code) ? "少し待ってから参加してください" : "参加できません。店舗ID・招待コード・有効期限を確認してください";
+            leave(); status = "PLAY_LICENSE_REQUIRED".equals(code) ? "購入確認できません。購入したGoogle Playアカウントで再参加してください" : "TURN_UNAVAILABLE".equals(code) ? "音声中継の準備に失敗しました。再参加してください" : "ROOM_FULL".equals(code) ? "ルームが満員です" : "RETRY_LATER".equals(code) ? "少し待ってから参加してください" : "参加できません。店舗ID・招待コード・有効期限を確認してください";
         });
         listen(current, session, "rtc-config", args -> {
             try {
@@ -221,7 +245,10 @@ public final class IntercomService extends Service {
     }
     private void emitJoin(Socket current) {
         joinSent = true;
-        current.emit("join-room", json("roomId", room, "name", userName, "storeId", storeId, "inviteCode", inviteCode));
+        current.emit(playLicenseRequired ? "request-license-challenge" : "join-room", joinPayload());
+    }
+    private JSONObject joinPayload() {
+        return json("roomId", room, "name", userName, "storeId", storeId, "inviteCode", inviteCode);
     }
     private interface Event { void accept(Object[] args); }
     private void listen(Socket current, int session, String event, Event callback) {

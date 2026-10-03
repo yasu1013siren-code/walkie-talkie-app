@@ -59,3 +59,12 @@ test('authenticated ICE reaches new and existing peers; denial cleans up capture
   assert.equal(h.stopped(), true); assert.equal(h.track.enabled, false); assert.equal(h.element('inviteInput').value, '');
   assert.ok(h.alerts.length);
 });
+test('paid server rejects Web access and stops capture without runtime errors', async () => {
+  const h = harness(); await h.element('joinBtn').events.click();
+  h.events['server-capabilities']({ accessProtocol: 1, playLicenseRequired: true });
+  assert.equal(h.stopped(), true);
+  assert.equal(h.emitted.filter(x => x.name === 'join-room').length, 0);
+  await h.element('joinBtn').events.click();
+  assert.equal(h.emitted.filter(x => x.name === 'join-room').length, 0);
+  assert.ok(h.alerts.at(-1).includes('Google Play'));
+});

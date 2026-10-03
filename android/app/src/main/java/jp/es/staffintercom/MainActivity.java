@@ -88,10 +88,26 @@ public final class MainActivity extends Activity {
         latch = button(root, "送信を開始（もう一度押すと停止）", v -> { if (service != null) service.toggleTalking(); render(); });
         button(root, "Bluetooth接続を再確認", v -> { if (service != null) service.selectAudioRoute(); render(); });
         leave = button(root, "退出", v -> { if (service != null) service.leave(); render(); });
+        if (!BuildConfig.SUPPORT_EMAIL.isEmpty()) button(root, "お問い合わせ", v -> {
+            try { startActivity(new Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:" + BuildConfig.SUPPORT_EMAIL))); }
+            catch (ActivityNotFoundException ignored) { Toast.makeText(this, BuildConfig.SUPPORT_EMAIL, Toast.LENGTH_LONG).show(); }
+        });
         TextView help = new TextView(this);
         help.setText("Bluetoothイヤホンを接続してから参加してください。\n参加中は画面を消しても受信を続けます。送信切替は通知からも操作できます。\n通話ボタン操作ON：通話ボタンで送信開始、もう一度押すと停止。\n停止後は次の操作の準備に約1秒かかります。イヤホン側で待機音が鳴る場合があります。");
         help.setPadding(0, pad, 0, 0); root.addView(help);
-        ScrollView scroll = new ScrollView(this); scroll.addView(root); setContentView(scroll); render();
+        ScrollView scroll = new ScrollView(this); scroll.addView(root);
+        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+            int left, top, right, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                left = safe.left; top = safe.top; right = safe.right; bottom = safe.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(left, top, right, bottom); return insets;
+        });
+        setContentView(scroll); scroll.requestApplyInsets(); render();
     }
     private Button button(LinearLayout root, String text, View.OnClickListener click) {
         Button b = new Button(this); b.setText(text); if (click != null) b.setOnClickListener(click);

@@ -8,7 +8,7 @@ import org.webrtc.PeerConnection;
 import java.util.*;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 35)
+@Config(sdk = {35, 36})
 public class RtcSettingsTest {
     @Test public void parsesAuthenticatedTurnAndKeepsStunFallback() throws Exception {
         assertEquals(2, RtcSettings.defaults().size());
