@@ -1,0 +1,36 @@
+# Import this as a NEW validation service, not as the existing live service.
+services:
+  - type: web
+    name: staff-intercom-sales-validation
+    runtime: node
+    plan: free
+    region: singapore
+    branch: sale-prep/access-turn-20261002
+    autoDeployTrigger: off
+    buildCommand: npm ci --omit=dev
+    startCommand: node scripts/check-sales-config.js && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_LEGACY_ROOMS
+        value: "false"
+      - key: REQUIRE_PLAY_LICENSE
+        value: "true"
+      - key: TURN_PROVIDER
+        value: cloudflare
+      - key: TURN_CREDENTIAL_TTL
+        value: "32400"
+      - key: ACCESS_POLICY_JSON
+        sync: false
+      - key: PLAY_CLOUD_PROJECT_NUMBER
+        sync: false
+      - key: PLAY_CERTIFICATE_SHA256
+        sync: false
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/google-play-integrity.json
+# Add google-play-integrity.json through Render Secret Files before deploying.
+# Free instance hours and bandwidth are shared with other workspace services.
