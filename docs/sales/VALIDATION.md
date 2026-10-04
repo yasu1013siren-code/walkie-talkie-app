@@ -86,3 +86,20 @@ mainのマージ、本番デプロイ、サーバー設定変更、有料契約�
 5. **実機/公開準備**：Android16・Samsung・S10/M2で背景送受信、2/5/10台、長時間、マイク/通知拒否、着信割込み、音量、16KB端末。現行設定は最大8時間で再参加が必要。公開前にIP/全体Quota制限、FGS/Data safety申告、最終署名/AAB/更新番号とストア審査を確認。
 
 鍵とパスワードの再作成/出力/公開はしていない。mainマージ、本番設定変更/デプロイ、有料契約/支払い、価格の確定、連絡先の新規作成/公開、Console課金、ストア公開は行っていない。成果は既存販売準備ブランチ/ドラフトPRにのみ保存する。
+
+## 2026-10-04 UTC：保存後のCI確認
+
+既存PR #2の実装コミット `e13f454c5a03120d10bf01241c36e36044f07e0a` とmain `66ffd6564bb3202a6c3b54d19de8e352098990e2` を再取得して比較。mainと実装に追加変更はなく、今回はコードの変更や署名鍵へのアクセスを行っていない。
+
+GitHub Actions [Sales preparation checks / run 37104127564](https://github.com/yasu1013siren-code/walkie-talkie-app/actions/runs/37104127564) は完了・成功。上記ローカル検証とは別に、次のCI実行成功を確認した。
+
+| CIジョブ | 結果 | 実行内容 |
+|---|---|---|
+| server-and-web | 成功 | `npm ci`、`npm test` |
+| android-regression | 成功 | JDK21、SDK36、`:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:bundleRelease`、Debug APKのarm64 ELF 16KB整列と`zipalign -c -P 16 4` |
+
+この結果は実装コミットe13f454に対するCIであり、この追記コミットのCI結果を先取りしたものではない。既存のCIでテストとAndroidビルドを実行済みのため、同じソースをこの回に重複ビルドしていない。
+
+公式要件も2026-10-04 UTCに再取得した。[Google Play対象API要件](https://support.google.com/googleplay/android-developer/answer/11926878) は新規・更新アプリのAPI36要件（2026-08-31から、延長は2026-11-01まで）、[Cloudflare公式料金](https://developers.cloudflare.com/realtime/sfu/platform/pricing/) はSFU/TURN共有の月1,000GB無料枠とegress $0.05/GBを確認。既存資料の該当前提を維持できる。
+
+CI成功はPlayでの購入・返金・署名認識、外部TURNでの中継、Android実機での背景通信・S10/M2操作を証明しない。上記「未完了・必要な決定/アクセス」は引き続き未完了。価格確定、契約、Console設定、本番変更、公開は行っていない。
