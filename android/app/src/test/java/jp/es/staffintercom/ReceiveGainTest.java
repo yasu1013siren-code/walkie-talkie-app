@@ -7,7 +7,7 @@ import org.robolectric.annotation.*;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 35)
+@Config(sdk = {35, 36})
 public class ReceiveGainTest {
     @Before public void clearSettings() {
         RuntimeEnvironment.getApplication().getSharedPreferences("intercom", 0).edit().clear().commit();

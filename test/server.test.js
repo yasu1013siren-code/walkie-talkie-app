@@ -12,7 +12,7 @@ function event(socket, name) {
 
 test('room membership, leave and signal isolation', async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) } });
+  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, NODE_ENV: 'test', PORT: String(port) } });
   const clients = [];
   try {
     await new Promise((resolve, reject) => {
