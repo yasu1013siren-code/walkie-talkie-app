@@ -5,6 +5,7 @@ let peers = {};        // id -> { pc, name }
 let audioElements = {}; // id -> <audio>
 let talking = false;
 let joined = false;
+let playLicenseRequired = false;
 let wakeLock = null;
 let lastHeadsetAction = 0;
 const headsetActions = ['play', 'pause', 'togglemicrophone', 'stop', 'hangup'];
@@ -24,7 +25,7 @@ const audioHelp = document.getElementById('audioHelp');
 const headsetStatus = document.getElementById('headsetStatus');
 
 function notifyNativeJoined() {
-  window.IntercomNative?.setJoined(joined && socket.connected);
+  window.IntercomNative?.setJoined(joined && accepted && socket.connected);
 }
 
 // Called by the Android wrapper when its MediaSession receives a headset button.
@@ -128,14 +129,31 @@ audioOutput.addEventListener('change', async () => {
 enableAudio.addEventListener('click', enablePlayback);
 navigator.mediaDevices?.addEventListener?.('devicechange', () => refreshAudioOutputs().catch(console.warn));
 
-const configuration = {
-  iceServers: [
+let accepted = false;
+let accessProtocol = false, joinSent = false, admissionTimer;
+function submitJoin() {
+  if (!joined || joinSent || !socket.connected) return;
+  if (storeInput.value.trim() && !accessProtocol) {
+    clearTimeout(admissionTimer);
+    admissionTimer = setTimeout(() => {
+      if (joined && !joinSent) { leaveBtn.click(); alert('このサーバーは店舗参加に対応していません。管理者に確認してください'); }
+    }, 5000);
+    return;
+  }
+  clearTimeout(admissionTimer); joinSent = true;
+  socket.emit('join-room', joinPayload());
+}
+const storeInput = document.getElementById('storeInput');
+const inviteInput = document.getElementById('inviteInput');
+const joinPayload = () => ({ roomId: roomInput.value.trim(), name: nameInput.value.trim(), storeId: storeInput.value.trim(), inviteCode: inviteInput.value });
+const defaultIceServers = () => [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' }
-  ]
-};
+  ];
+const configuration = { iceServers: defaultIceServers() };
 
 joinBtn.addEventListener('click', async () => {
+  if (playLicenseRequired) { alert('販売用ルームはGoogle Play購入済みAndroidアプリから参加してください'); return; }
   const roomId = roomInput.value.trim();
   const name = nameInput.value.trim();
   if (!roomId) {
@@ -168,12 +186,17 @@ joinBtn.addEventListener('click', async () => {
   talkScreen.classList.remove('hidden');
   statusEl.textContent = `ルーム「${roomId}」に接続中...`;
 
-  socket.emit('join-room', { roomId, name });
+  accepted = false;
+  submitJoin();
 });
 
 leaveBtn.addEventListener('click', () => {
   stopTalking();
   joined = false;
+  accepted = false; joinSent = false; clearTimeout(admissionTimer);
+  inviteInput.value = "";
+  configuration.iceServers = defaultIceServers();
+  participantsEl.replaceChildren();
   notifyNativeJoined();
   clearHeadsetControls();
   wakeLock?.release().catch(() => {});
@@ -189,6 +212,8 @@ leaveBtn.addEventListener('click', () => {
 });
 
 socket.on('disconnect', () => {
+  accepted = false; joinSent = false; accessProtocol = false; clearTimeout(admissionTimer);
+  configuration.iceServers = defaultIceServers();
   stopTalking();
   notifyNativeJoined();
   headsetStatus.textContent = '通信が切れました。イヤホンボタンで送信できません。';
@@ -202,13 +227,16 @@ socket.on('disconnect', () => {
   }
 });
 socket.on('connect', () => {
-  if (joined) socket.emit('join-room', { roomId: roomInput.value.trim(), name: nameInput.value.trim() });
+  joinSent = false; accessProtocol = false;
+  if (joined) submitJoin();
   if (joined) registerHeadsetControls();
   notifyNativeJoined();
 });
 
 socket.on('existing-users', async (users) => {
   if (!joined) return;
+  accepted = true;
+  notifyNativeJoined();
   statusEl.textContent = `接続完了(参加者 ${users.length + 1}人)`;
   for (const user of users) {
     await createPeerConnection(user.id, user.name, true);
@@ -240,7 +268,7 @@ socket.on('signal', async ({ from, data }) => {
     try {
       await pc.addIceCandidate(new RTCIceCandidate(data));
     } catch (e) {
-      console.error('ICE candidate エラー', e);
+      console.error('ICE candidate エラー');
     }
   }
 });
@@ -325,7 +353,7 @@ function updateStatusCount() {
 }
 
 function startTalking() {
-  if (!joined || !socket.connected || !localStream || talking) return;
+  if (!joined || !accepted || !socket.connected || !localStream || talking) return;
   talking = true;
   localStream.getAudioTracks().forEach(track => (track.enabled = true));
   pttBtn.classList.add('active');
@@ -358,3 +386,27 @@ pttBtn.addEventListener('pointerup', stopTalking);
 pttBtn.addEventListener('pointercancel', stopTalking);
 pttBtn.addEventListener('lostpointercapture', stopTalking);
 window.addEventListener('blur', stopTalking);
+
+// Credentials stay in memory and are never cached by the service worker.
+socket.on('rtc-config', config => {
+  if (!joined || !Array.isArray(config?.iceServers)) return;
+  configuration.iceServers = config.iceServers;
+  try { Object.values(peers).forEach(({ pc }) => pc.setConfiguration(configuration)); }
+  catch (_) { leaveBtn.click(); alert('音声接続設定を更新できませんでした。再参加してください'); }
+});
+socket.on('join-error', error => {
+  leaveBtn.click();
+  alert(error?.code === 'ROOM_FULL' ? 'ルームが満員です' : error?.code === 'RETRY_LATER' ? '少し待ってから参加してください' : '参加できません。店舗ID・ルームID・招待コードや有効期限を確認してください');
+});
+setInterval(() => { if (joined && accepted && socket.connected) socket.emit('request-rtc-config'); }, 600000);
+
+socket.on('server-capabilities', capability => {
+  playLicenseRequired = !!capability.playLicenseRequired;
+  if (playLicenseRequired) {
+    leaveBtn.click();
+    alert('販売用ルームはGoogle Play購入済みAndroidアプリから参加してください');
+    return;
+  }
+  accessProtocol = capability?.accessProtocol === 1;
+  if (joined) submitJoin();
+});

@@ -105,3 +105,23 @@ walkie-talkie-app/
 参加後、ブラウザがイヤホンのメディア操作をこのページに届ける場合は、再生ボタンで送信を開始し、停止ボタンで送信を止められます。マイク切替操作に対応する端末では同じボタンで交互に切り替わります。画面のPTTボタンは従来どおり押している間だけ送信します。画面に「イヤホン操作を検出」と表示されれば入力が届いています。
 
 イヤホンの通話ボタンは電話の応答・終話としてOSに処理され、Webページに届かない機種があります。また、Media Sessionの対応表示だけでは実機動作を保証できません。送信中は画面でも赤く表示されるので、最初に2台で音声と停止を確かめてください。通信切断、画面が非表示になった時、退出時には送信を停止します。画面ロック中の操作は保証しません。
+
+## 販売準備ブランチ
+
+参加制限・招待とTURNを追加する準備実装です。本番へ未反映。設定未変更では従来ルームを維持します。販売サービスは従来ルームを無効にして運用します。
+
+- [設定と移行](docs/sales/SETUP.md)
+- [プライバシーポリシー案](docs/sales/PRIVACY_POLICY_DRAFT.md)
+- [ストア掲載案と未対応要件](docs/sales/STORE_LISTING_DRAFT.md)
+- [実機試験手順](docs/sales/DEVICE_TEST_PLAN.md)
+- [運用費用](docs/sales/OPERATIONS_COSTS.md)
+- [検証結果](docs/sales/VALIDATION.md)
+
+### 販売準備の続き（API36 / Google Play購入確認）
+
+- `docs/sales/API36_REVIEW.md`：API36と権限・背景サービスの影響。
+- `docs/sales/PLAY_LICENSE_SETUP.md`：Play Integrityの設定と未完了のConsole試験。
+- `docs/sales/PRICING_OPTIONS.md` / `TURN_COMPARISON.md`：未承認の価格候補、人数別採算、TURN契約準備。
+- `docs/sales/CONTACT_SETUP.md`：確認済み事業用問い合わせ先の設定。
+
+このブランチのサーバーは既定で購入確認を必須とします。開発回帰試験だけは `NODE_ENV=development npm start` を明示してください。販売用では `NODE_ENV=production` と必要なPlay設定、`ALLOW_LEGACY_ROOMS=false` を使用し、Debug APKやWebを購入確認の代替にしないでください。main/本番へはまだ反映していません。
