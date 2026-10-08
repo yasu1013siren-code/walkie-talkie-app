@@ -15,9 +15,11 @@
 <div id="joinScreen" class="screen">
   <div class="card">
     <h1>📻 インカム</h1>
-    <p class="sub">同じルームIDを入力した相手と通話できます</p>
-    <input type="text" id="roomInput" placeholder="ルームID (例: family01)" autocomplete="off">
-    <input type="text" id="nameInput" placeholder="表示名 (任意)" autocomplete="off">
+    <p class="sub">店舗ID・ルームID・招待キーで参加します</p>
+    <input type="text" id="roomInput" maxlength="32" placeholder="ルームID (例: family01)" autocomplete="off">
+    <input type="text" id="nameInput" maxlength="40" placeholder="表示名 (任意)" autocomplete="off">
+    <input type="text" id="storeInput" placeholder="店舗ID（必須）" maxlength="32" autocomplete="off">
+    <input type="password" id="inviteInput" placeholder="招待コード" maxlength="256" autocomplete="off">
     <button id="joinBtn">参加する</button>
   </div>
 </div>
