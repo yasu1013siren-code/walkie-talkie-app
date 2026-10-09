@@ -1,0 +1,64 @@
+name: Personal intercom APK
+on:
+  push:
+    branches: ['personal/no-input-20261009']
+    paths: ['.github/workflows/personal-apk.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Configure personal APK without publishing its invitation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import secrets,hashlib,json
+          key=secrets.token_urlsafe(32)
+          print("::add-mask::"+key)
+          policy={"personal":{"rooms":{"main":{"maxParticipants":4,"invites":[{"sha256":hashlib.sha256(key.encode()).hexdigest(),"expiresAt":"2027-10-09T15:00:00Z"}]}}}}
+          out=Path("personal-output");out.mkdir()
+          (out/"personal-policy.json").write_text(json.dumps(policy,separators=(",",":")))
+          p=Path("android/app/build.gradle")
+          s=p.read_text().replace("applicationId 'jp.es.staffintercom.preview'","applicationId 'jp.es.staffintercom.personal'").replace("versionName '0.2.5'","versionName '0.2.5-personal'")
+          p.write_text(s)
+          p=Path("android/app/src/main/AndroidManifest.xml")
+          s=p.read_text().replace('android:label="スタッフインカム"','android:label="自分用インカム"')
+          p.write_text(s)
+          p=Path("android/app/src/main/java/jp/es/staffintercom/MainActivity.java")
+          s=p.read_text()
+          def replace_once(old,new):
+           global s
+           assert s.count(old)==1,old
+           s=s.replace(old,new)
+          replace_once("private boolean bound, holding;","private boolean bound, holding, autoJoinStarted;")
+          replace_once("service = ((IntercomService.LocalBinder) b).getService(); render();","service = ((IntercomService.LocalBinder) b).getService(); render();\n            if (!autoJoinStarted) { autoJoinStarted = true; if (!service.isJoined()) requestJoin(); }")
+          replace_once('title.setText("スタッフインカム " + BuildConfig.VERSION_NAME + "\\nバックグラウンド通話")','title.setText("自分用インカム\\nBluetooth・バックグラウンド通話")')
+          replace_once('room.setText(prefs.getString("room", "es")); name.setText(prefs.getString("name", ""));','room.setText("main"); name.setText(prefs.getString("name", android.os.Build.MODEL.substring(0, Math.min(25, android.os.Build.MODEL.length())) + "-" + java.util.UUID.randomUUID().toString().substring(0,4)));')
+          replace_once('root.addView(room); root.addView(name);','root.addView(name);')
+          replace_once('store.setText(prefs.getString("storeId", "")); root.addView(store);','store.setText("personal");')
+          replace_once('root.addView(invite);','invite.setText('+json.dumps(key)+');')
+          replace_once('prefs.getBoolean("headsetCalls", false)','prefs.getBoolean("headsetCalls", true)')
+          replace_once('join = button(root, "ルームに参加", v -> requestJoin());','join = button(root, "通話に接続", v -> requestJoin());')
+          replace_once('private void requestJoin() {','private void requestJoin() {\n        room.setText("main"); store.setText("personal"); invite.setText('+json.dumps(key)+');')
+          replace_once('getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("storeId", store.getText().toString().trim()).putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();','getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("name", name.getText().toString().trim()).apply();')
+          p.write_text(s)
+          PY
+      - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk personal-output/intercom-personal.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intercom-personal
+          path: personal-output/
+          retention-days: 1
