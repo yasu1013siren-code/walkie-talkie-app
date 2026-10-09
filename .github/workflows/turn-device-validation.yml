@@ -1,0 +1,48 @@
+name: TURN device validation APK
+on:
+  push:
+    branches: ['security/room-access-20261009']
+    paths: ['.github/workflows/turn-device-validation.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      INTERCOM_SERVER_URL: https://staff-intercom-security-validation.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Isolate validation app and require TURN relay
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert "applicationId 'jp.es.staffintercom.preview'" in s
+          s=s.replace("applicationId 'jp.es.staffintercom.preview'", "applicationId 'jp.es.staffintercom.turnvalidation'")
+          s=s.replace("versionName '0.2.4'", "versionName '0.2.4-TURN-test'")
+          p.write_text(s)
+          p=Path('android/app/src/main/java/jp/es/staffintercom/IntercomService.java')
+          s=p.read_text()
+          for line in ['PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(iceServers);','PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(ice);']:
+              assert s.count(line)==1
+              s=s.replace(line,line+'\n        config.iceTransportsType = PeerConnection.IceTransportsType.RELAY;')
+          p.write_text(s)
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text().replace('android:label="スタッフインカム"','android:label="インカム TURN検証"')
+          p.write_text(s)
+          PY
+      - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intercom-turn-device-validation
+          path: android/app/build/outputs/apk/debug/app-debug.apk
