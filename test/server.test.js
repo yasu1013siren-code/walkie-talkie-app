@@ -1,6 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const crypto = require('node:crypto');
+const inviteCode = crypto.randomBytes(32).toString('base64url');
+const sha256 = crypto.createHash('sha256').update(inviteCode).digest('hex');
+const ACCESS_POLICY_JSON = JSON.stringify({ shop: { rooms: Object.fromEntries(['es', 'other'].map(id => [id, { maxParticipants: 5, invites: [{ sha256, expiresAt: '2099-01-01T00:00:00Z' }] }])) } });
 const { io } = require('socket.io-client');
 
 function event(socket, name) {
@@ -12,7 +16,7 @@ function event(socket, name) {
 
 test('room membership, leave and signal isolation', async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) } });
+  const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, ACCESS_POLICY_JSON, PORT: String(port) } });
   const clients = [];
   try {
     await new Promise((resolve, reject) => {
@@ -29,18 +33,18 @@ test('room membership, leave and signal isolation', async () => {
     const a = await connect();
     const b = await connect();
     const c = await connect();
-    a.emit('join-room', { roomId: 'es', name: 'A' });
+    a.emit('join-room', { storeId: 'shop', inviteCode, roomId: 'es', name: 'A' });
     assert.deepEqual(await event(a, 'existing-users'), []);
-    b.emit('join-room', { roomId: 'other', name: 'B' });
+    b.emit('join-room', { storeId: 'shop', inviteCode, roomId: 'other', name: 'B' });
     assert.deepEqual(await event(b, 'existing-users'), []);
-    c.emit('join-room', { roomId: 'es', name: 'C' });
+    c.emit('join-room', { storeId: 'shop', inviteCode, roomId: 'es', name: 'C' });
     assert.equal((await event(c, 'existing-users'))[0].id, a.id);
     const received = event(a, 'signal');
-    c.emit('signal', { to: a.id, data: { type: 'offer' } });
+    c.emit('signal', { to: a.id, data: { type: 'offer', sdp: 'test' } });
     assert.equal((await received).from, c.id);
     c.emit('leave-room');
     await event(a, 'user-left');
-    c.emit('signal', { to: a.id, data: { type: 'offer' } });
+    c.emit('signal', { to: a.id, data: { type: 'offer', sdp: 'test' } });
     const noSignal = await Promise.race([event(a, 'signal').then(() => false), new Promise(r => setTimeout(() => r(true), 200))]);
     assert.equal(noSignal, true);
     const noCrossRoom = await Promise.race([event(b, 'signal').then(() => false), new Promise(r => setTimeout(() => r(true), 200))]);
