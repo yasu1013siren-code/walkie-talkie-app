@@ -123,3 +123,18 @@ test('unconfigured deployment denies admission/TURN and serves protection header
     await event(badOrigin, 'connect_error'); assert.equal(badOrigin.connected, false);
   } finally { clients.forEach(c => c.disconnect()); server.kill(); }
 });
+
+test('explicit null expiry remains authorized in the future while missing or invalid expiry is rejected', () => {
+  const config = loadConfig({ ACCESS_POLICY_JSON: policy(null) });
+  const admission = authorize(config, payload(), Date.UTC(2200, 0, 1));
+  assert.equal(admission.expires, Infinity);
+  assert.equal(authorize(config, payload('unknown')), null);
+  assert.equal(authorize(config, payload('shopA', 'x'.repeat(43))), null);
+  assert.equal(authorize(loadConfig({}), payload()), null);
+  for (const expiresAt of [undefined, false, 0, '', 'invalid']) {
+    const invalid = { shopA: { rooms: { main: { maxParticipants: 2, invites: [{ sha256: digest, expiresAt }] } } } };
+    assert.throws(() => loadConfig({ ACCESS_POLICY_JSON: JSON.stringify(invalid) }));
+  }
+  const timed = loadConfig({ ACCESS_POLICY_JSON: policy('2099-01-01T00:00:00Z') });
+  assert.equal(authorize(timed, payload(), Date.UTC(2200, 0, 1)), null);
+});

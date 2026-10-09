@@ -90,7 +90,7 @@ io.on('connection', (socket) => {
       socket.emit('join-error', { code: 'ROOM_FULL' }); return;
     }
     leaveRoom(); membership = next;
-    membership.expires = Math.min(membership.expires, Date.now() + 8 * 3600000);
+    if (Number.isFinite(membership.expires)) membership.expires = Math.min(membership.expires, Date.now() + 8 * 3600000);
     const userName = typeof payload.name === 'string' && payload.name.length <= 40 ? payload.name.trim() : '';
     socket.join(next.key);
     if (!rooms.has(next.key)) rooms.set(next.key, new Map());

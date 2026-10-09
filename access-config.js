@@ -14,7 +14,7 @@ function loadConfig(env = process.env) {
       for (const [roomId, rule] of Object.entries(store.rooms)) {
         if (!ID.test(roomId) || !rule || !Array.isArray(rule.invites) || !Number.isInteger(rule.maxParticipants) || rule.maxParticipants < 1 || rule.maxParticipants > 50) throw Error();
         for (const invite of rule.invites) {
-          if (!invite || !/^[a-f0-9]{64}$/.test(invite.sha256) || typeof invite.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(invite.expiresAt) || !Number.isFinite(Date.parse(invite.expiresAt))) throw Error();
+          if (!invite || !/^[a-f0-9]{64}$/.test(invite.sha256) || (invite.expiresAt !== null && (typeof invite.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(invite.expiresAt) || !Number.isFinite(Date.parse(invite.expiresAt))))) throw Error();
         }
         rooms.set(JSON.stringify([storeId, roomId]), rule);
       }
@@ -39,8 +39,8 @@ function authorize(config, payload, now = Date.now()) {
   const rule = config.rooms.get(key);
   if (!rule) return null;
   const digest = crypto.createHash('sha256').update(inviteCode).digest();
-  const invite = rule.invites.find(i => crypto.timingSafeEqual(digest, Buffer.from(i.sha256, 'hex')) && Date.parse(i.expiresAt) > now);
-  return invite ? { key, expires: Date.parse(invite.expiresAt), max: rule.maxParticipants } : null;
+  const invite = rule.invites.find(i => crypto.timingSafeEqual(digest, Buffer.from(i.sha256, 'hex')) && (i.expiresAt === null || Date.parse(i.expiresAt) > now));
+  return invite ? { key, expires: invite.expiresAt === null ? Infinity : Date.parse(invite.expiresAt), max: rule.maxParticipants } : null;
 }
 function rtcConfig(config, socketId, now = Date.now()) {
   const iceServers = STUN.map(x => ({ ...x }));
