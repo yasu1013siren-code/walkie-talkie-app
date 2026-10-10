@@ -28,6 +28,81 @@ public final class IntercomService extends Service {
     private final LocalBinder binder = new LocalBinder();
     private final Map<String, Peer> peers = new LinkedHashMap<>();
     private Socket socket;
+    private OfflineSpeech speech;
+    private ConversationStore conversation;
+    private boolean transcribeEnabled, saveConversation, voiceCommands;
+    private String speechState = "文字起こしOFF", startWord = "インカム開始", stopWord = "インカム停止";
+    private final Map<String,String> partialText = new LinkedHashMap<>();
+    private final ArrayDeque<String> recentText = new ArrayDeque<>();
+    private long textSequence, lastVoiceCommand;
+    private final Runnable voiceTimeout = () -> setTalking(false);
+    void clearRecentConversation() { recentText.clear(); partialText.clear(); }
+    String getSpeechState() { return speechState; }
+    String getConversation() {
+        StringBuilder out = new StringBuilder(saveConversation ? conversation.text(100) : String.join("\n\n", recentText));
+        for (String line : partialText.values()) out.append("\n").append(line).append(" …\n");
+        return out.length() == 0 ? "まだ会話はありません" : out.toString();
+    }
+    void configureSpeech(boolean transcription, boolean save, boolean commands, String start, String stop) {
+        transcribeEnabled = transcription; saveConversation = save; voiceCommands = commands;
+        startWord = start; stopWord = stop;
+        if (!transcription) partialText.clear();
+        if (!commands) main.removeCallbacks(voiceTimeout);
+        if (speech != null) speech.enable(transcription || commands);
+    }
+    private void ownText(String text, boolean complete, boolean sent, int epoch) {
+        if (!joined || speech == null) return;
+        int command = SpeechRules.command(text, startWord, stopWord);
+        if (voiceCommands && speech.current(epoch) && command != 0) {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastVoiceCommand >= 1500) {
+                lastVoiceCommand = now;
+                setTalking(command > 0);
+                if (command > 0 && talking) { main.removeCallbacks(voiceTimeout); main.postDelayed(voiceTimeout, 30000); speechState = "音声操作：送信開始（30秒で自動停止）"; }
+                else if (command < 0) speechState = "音声操作：送信停止";
+            }
+            return;
+        }
+        if (!transcribeEnabled || !sent || (voiceCommands && command != 0)) return;
+        showText("self", userName.isEmpty() ? "自分" : userName, text, complete);
+        JSONObject packet = json("v", 1, "seq", ++textSequence, "text", ConversationStore.clean(text,2000), "final", complete);
+        byte[] bytes = packet.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (Peer peer : peers.values()) if (peer.textChannel != null && peer.textChannel.state() == DataChannel.State.OPEN && peer.textChannel.bufferedAmount() < 32768)
+            peer.textChannel.send(new DataChannel.Buffer(java.nio.ByteBuffer.wrap(bytes), false));
+    }
+    private void showText(String id, String speaker, String text, boolean complete) {
+        text = ConversationStore.clean(text,2000); speaker = ConversationStore.clean(speaker,40);
+        if (!complete) { if (text.isEmpty()) partialText.remove(id); else partialText.put(id, speaker + "：" + text); return; }
+        partialText.remove(id); if (text.isEmpty()) return;
+        recentText.addLast(new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.JAPAN).format(new java.util.Date()) + " " + speaker + "\n" + text);
+        while (recentText.size() > 100) recentText.removeFirst();
+        if (saveConversation) conversation.add(speaker,text);
+    }
+    private void attachText(Peer peer, DataChannel channel) {
+        if (channel == null) return;
+        if (!peer.live() || !"intercom-text-v1".equals(channel.label())) { channel.close(); channel.dispose(); return; }
+        if (peer.textChannel != null) { channel.close(); channel.dispose(); return; }
+        peer.textChannel = channel;
+        channel.registerObserver(new DataChannel.Observer() {
+            public void onBufferedAmountChange(long previous) {}
+            public void onStateChange() {}
+            public void onMessage(DataChannel.Buffer buffer) {
+                if (buffer.binary || buffer.data.remaining() > 8192) return;
+                byte[] bytes = new byte[buffer.data.remaining()]; buffer.data.get(bytes);
+                main.post(() -> {
+                    if (!peer.live() || !transcribeEnabled) return;
+                    long now=SystemClock.elapsedRealtime(); if(now-peer.textWindow>=1000){peer.textWindow=now;peer.textCount=0;} if(++peer.textCount>12)return;
+                    try {
+                        JSONObject data=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));
+                        if(data.optInt("v")!=1 || !(data.opt("text") instanceof String) || !(data.opt("final") instanceof Boolean))return;
+                        long seq=data.optLong("seq",-1); if(seq<=peer.lastTextSequence)return;
+                        String text=data.getString("text"); if(text.length()>2000)return; peer.lastTextSequence=seq;
+                        showText(peer.id,peer.name,text,data.getBoolean("final"));
+                    } catch(JSONException ignored) {}
+                });
+            }
+        });
+    }
     private String storeId = "", inviteCode = "";
     private boolean joinSent;
     private List<PeerConnection.IceServer> iceServers = RtcSettings.defaults();
@@ -94,6 +169,10 @@ public final class IntercomService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         receiveGain = normalizeReceiveGain(getSharedPreferences("intercom", MODE_PRIVATE).getFloat("receiveGain", 2f));
+        conversation = new ConversationStore(this);
+        android.content.SharedPreferences prefs=getSharedPreferences("intercom",MODE_PRIVATE);
+        transcribeEnabled=prefs.getBoolean("transcribe",true);saveConversation=prefs.getBoolean("saveConversation",true);voiceCommands=prefs.getBoolean("voiceCommands",false);
+        startWord=prefs.getString("startWord","インカム開始");stopWord=prefs.getString("stopWord","インカム停止");
         audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL, "インカム通話", NotificationManager.IMPORTANCE_LOW));
         focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -173,7 +252,12 @@ public final class IntercomService extends Service {
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this).createInitializationOptions());
         // Native ICE logs can include temporary credentials and connection addresses.
         Logging.enableLogToDebugOutput(Logging.Severity.LS_NONE);
-        audioModule = JavaAudioDeviceModule.builder(this).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true).createAudioDeviceModule();
+        speech = new OfflineSpeech(this, new OfflineSpeech.Listener() {
+            public void text(String text, boolean complete, boolean sent, int epoch) { main.post(() -> ownText(text,complete,sent,epoch)); }
+            public void state(String text) { main.post(() -> speechState=text); }
+        });
+        speech.enable(transcribeEnabled || voiceCommands);
+        audioModule = JavaAudioDeviceModule.builder(this).setSamplesReadyCallback(samples -> { OfflineSpeech current=speech; if(current!=null)current.samples(samples); }).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();
         source = factory.createAudioSource(new MediaConstraints());
         track = factory.createAudioTrack("intercom-audio", source); track.setEnabled(false); initialized = true;
@@ -243,6 +327,7 @@ public final class IntercomService extends Service {
         p.pc = factory.createPeerConnection(config, p);
         if (p.pc == null) { peers.remove(id); status = "音声接続を作成できませんでした"; updateNotification(); return null; }
         p.pc.addTrack(track, Collections.singletonList("intercom"));
+        if (offer) attachText(p, p.pc.createDataChannel("intercom-text-v1", new DataChannel.Init()));
         if (offer) p.pc.createOffer(new SdpAdapter(p) {
             @Override void created(SessionDescription sdp) { setLocal(p, sdp); }
         }, new MediaConstraints());
@@ -284,10 +369,10 @@ public final class IntercomService extends Service {
         void failed(String error) { main.post(() -> { if (peer.live()) { status = "音声接続に失敗しました。退出して再参加してください"; updateNotification(); android.util.Log.w("StaffIntercom", "Peer negotiation failed"); } }); }
     }
     private final class Peer implements PeerConnection.Observer {
-        final String id, name; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
+        final String id, name; DataChannel textChannel; long lastTextSequence=-1,textWindow; int textCount; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
         Peer(String id, String name) { this.id = id; this.name = name; }
         boolean live() { return joined && peers.get(id) == this && pc != null; }
-        void close() { remoteAudio = null; if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
+        void close() { partialText.remove(id); if(textChannel!=null){textChannel.unregisterObserver();textChannel.close();textChannel.dispose();textChannel=null;} remoteAudio = null; if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
         public void onIceCandidate(IceCandidate candidate) { main.post(() -> sendSignal(this, json("candidate", candidate.sdp, "sdpMid", candidate.sdpMid, "sdpMLineIndex", candidate.sdpMLineIndex))); }
         public void onConnectionChange(PeerConnection.PeerConnectionState state) {
             main.post(() -> { if (live() && state == PeerConnection.PeerConnectionState.FAILED) { status = "音声接続に失敗しました。ネットワークを確認し、再参加してください"; updateNotification(); } });
@@ -299,7 +384,7 @@ public final class IntercomService extends Service {
         public void onIceCandidatesRemoved(IceCandidate[] candidates) {}
         public void onAddStream(MediaStream stream) {}
         public void onRemoveStream(MediaStream stream) {}
-        public void onDataChannel(DataChannel channel) {}
+        public void onDataChannel(DataChannel channel) { main.post(() -> attachText(this,channel)); }
         public void onRenegotiationNeeded() {}
         public void onTrack(RtpTransceiver transceiver) { onAddTrack(transceiver.getReceiver(), new MediaStream[0]); }
         public void onAddTrack(RtpReceiver receiver, MediaStream[] streams) {
@@ -346,7 +431,7 @@ public final class IntercomService extends Service {
     void setTalking(boolean value) {
         boolean next = value && joined && connected && track != null && canUseAudio();
         if (talking == next) return;
-        talking = next; track.setEnabled(next);
+        talking = next; if(speech!=null)speech.transmission(next); if(!next)main.removeCallbacks(voiceTimeout); track.setEnabled(next);
         IntercomCallService.syncTalking(next);
         if (socket != null && connected) socket.emit("talking", next);
         updateStatus();
@@ -372,7 +457,7 @@ public final class IntercomService extends Service {
     private static JSONObject json(Object... pairs) { JSONObject out = new JSONObject(); try { for (int i = 0; i < pairs.length; i += 2) out.put((String) pairs[i], pairs[i + 1]); } catch (JSONException e) { throw new IllegalArgumentException(e); } return out; }
     private void closePeers() { List<Peer> old = new ArrayList<>(peers.values()); peers.clear(); for (Peer peer : old) peer.close(); }
     void leave() {
-        main.removeCallbacks(refreshIce); inviteCode = ""; storeId = ""; iceServers = RtcSettings.defaults();
+        main.removeCallbacks(refreshIce); main.removeCallbacks(voiceTimeout); if(speech!=null){speech.close();speech=null;} partialText.clear(); inviteCode = ""; storeId = ""; iceServers = RtcSettings.defaults();
         IntercomCallService.disable(); headsetStatus = "S10：ボタン操作OFF";
         setTalking(false); joined = false; connected = false; generation++;
         if (socket != null) { socket.emit("leave-room"); socket.off(); socket.disconnect(); socket = null; }
@@ -387,5 +472,5 @@ public final class IntercomService extends Service {
         try { if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice(); else { audio.stopBluetoothSco(); audio.setBluetoothScoOn(false); } audio.setMode(AudioManager.MODE_NORMAL); } catch (RuntimeException ignored) {}
         status = "未参加"; route = "音声出力：未接続"; updateNotification(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
     }
-    @Override public void onDestroy() { leave(); audio.unregisterAudioDeviceCallback(deviceCallback); main.removeCallbacksAndMessages(null); mediaSession.release(); super.onDestroy(); }
+    @Override public void onDestroy() { leave(); audio.unregisterAudioDeviceCallback(deviceCallback); main.removeCallbacksAndMessages(null); mediaSession.release(); if(conversation!=null)conversation.close(); super.onDestroy(); }
 }
