@@ -79,8 +79,8 @@ final class OfflineSpeech {
     private void recognitionFailed(Throwable e){enabled=false;phase="認識エラー（"+e.getClass().getSimpleName()+"）";listener.state("音声認識が停止しました。OFF→ONで再試行できます");}
     private void feedBuffered() throws Exception {
         byte[] pcm=pcmBuffer.take(); if(pcm.length==0 || recognizer==null)return;
-        rms=pcmRms(pcm); byte[] raw=pcm; pcm=conditionForRecognition(pcm); recognitionRms=pcmRms(pcm); probe.append(raw,pcm,(int)rate);
-        pcm=SpeechResample.to16k(pcm,(int)rate);
+        rms=pcmRms(pcm); byte[] raw=SpeechResample.to16k(pcm,(int)rate);
+        pcm=conditionForRecognition(raw); recognitionRms=pcmRms(pcm); probe.append(raw,pcm,16000);
         boolean done=recognizer.acceptWaveForm(pcm,pcm.length);
         long now=android.os.SystemClock.elapsedRealtime();
         if(done)publish(recognizer.getResult(),true,lastTransmitting,lastEpoch);
