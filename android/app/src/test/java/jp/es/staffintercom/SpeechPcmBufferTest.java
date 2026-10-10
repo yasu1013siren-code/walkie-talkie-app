@@ -31,9 +31,9 @@ public class SpeechPcmBufferTest {
         assertEquals(56,OfflineSpeech.pcmRms(pcm));
         assertEquals(1500,OfflineSpeech.pcmRms(OfflineSpeech.conditionForRecognition(pcm)));
         assertArrayEquals(original,pcm);
-        byte[] transient=new byte[9600];for(int i=0;i<transient.length;i+=2)transient[i]=50;
-        transient[0]=0x20;transient[1]=0x4e; // 20000 peak among quiet samples
-        byte[] conditioned=OfflineSpeech.conditionForRecognition(transient);
+        byte[] impulse=new byte[9600];for(int i=0;i<impulse.length;i+=2)impulse[i]=50;
+        impulse[0]=0x20;impulse[1]=0x4e; // 20000 peak among quiet samples
+        byte[] conditioned=OfflineSpeech.conditionForRecognition(impulse);
         int peak=0;for(int i=0;i<conditioned.length;i+=2)peak=Math.max(peak,Math.abs((short)((conditioned[i]&255)|(conditioned[i+1]<<8))));
         assertEquals(30000,peak);
     }
