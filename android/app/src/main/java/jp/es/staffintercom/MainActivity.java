@@ -20,6 +20,7 @@ public final class MainActivity extends Activity {
     private EditText startPhrase, stopPhrase;
     private TextView speechStatus, conversationText;
     private ConversationStore history;
+    private android.media.MediaPlayer probePlayer;
     private Button join, leave, latch, ptt;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -77,6 +78,17 @@ public final class MainActivity extends Activity {
         route = new TextView(this); route.setTextSize(15); root.addView(route);
         headsetState = new TextView(this); root.addView(headsetState);
         speechStatus = new TextView(this); root.addView(speechStatus);
+        button(root,"認識用音声を5秒録音（端末内のみ）",v -> {
+            if(probePlayer!=null){probePlayer.release();probePlayer=null;}
+            if(service==null || !service.startSpeechProbe())Toast.makeText(this,"文字起こしをONにし、送信を開始してから押してください",Toast.LENGTH_LONG).show();
+            else Toast.makeText(this,"5秒ほど話してください。自動送信はしません",Toast.LENGTH_LONG).show();
+        });
+        button(root,"補正前の音声を再生",v -> playProbe(false));
+        button(root,"認識に渡した音声を再生",v -> playProbe(true));
+        button(root,"認識用音声を書き出す",v -> {
+            if(!new java.io.File(getFilesDir(),"speech-probe-recognition.wav").exists()){Toast.makeText(this,"先に5秒録音してください",Toast.LENGTH_SHORT).show();return;}
+            startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/wav").putExtra(Intent.EXTRA_TITLE,"intercom-recognition.wav"),201);
+        });
         TextView heading = new TextView(this); heading.setText("最近の会話（文字起こし）"); heading.setTextSize(20); root.addView(heading);
         conversationText = new TextView(this); conversationText.setTextIsSelectable(true); root.addView(conversationText);
         gainLabel = new TextView(this); root.addView(gainLabel);
@@ -133,6 +145,18 @@ public final class MainActivity extends Activity {
         Button b = new Button(this); b.setText(text); if (click != null) b.setOnClickListener(click);
         root.addView(b, new LinearLayout.LayoutParams(-1, -2)); return b;
     }
+    private void playProbe(boolean normalized){
+        java.io.File file=new java.io.File(getFilesDir(),normalized?"speech-probe-recognition.wav":"speech-probe-raw.wav");
+        if(!file.exists()){Toast.makeText(this,"先に5秒録音してください",Toast.LENGTH_SHORT).show();return;}
+        if(service!=null && service.isTalking()){Toast.makeText(this,"送信を停止してから再生してください",Toast.LENGTH_SHORT).show();return;}
+        try{
+            if(probePlayer!=null){probePlayer.release();probePlayer=null;}
+            probePlayer=new android.media.MediaPlayer();
+            probePlayer.setAudioAttributes(new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
+            probePlayer.setDataSource(file.getAbsolutePath());probePlayer.setOnCompletionListener(player->{player.release();if(probePlayer==player)probePlayer=null;});
+            probePlayer.prepare();probePlayer.start();
+        }catch(Exception e){if(probePlayer!=null){probePlayer.release();probePlayer=null;}Toast.makeText(this,"再生できませんでした",Toast.LENGTH_SHORT).show();}
+    }
     private void applySpeech(boolean announce) {
         String start=startPhrase.getText().toString().trim(), stop=stopPhrase.getText().toString().trim();
         if (voiceMode.isChecked() && (SpeechRules.normalize(start).length()<3 || SpeechRules.normalize(stop).length()<3 || start.length()>40 || stop.length()>40 || SpeechRules.normalize(start).equals(SpeechRules.normalize(stop)))) {
@@ -144,14 +168,15 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
-        if(request!=200 || result!=RESULT_OK || data==null || data.getData()==null)return;
+        if((request!=200 && request!=201) || result!=RESULT_OK || data==null || data.getData()==null)return;
         try(java.io.OutputStream out=getContentResolver().openOutputStream(data.getData())){
             if(out==null)throw new java.io.IOException();
-            out.write(history.text(5000).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            Toast.makeText(this,"会話履歴を書き出しました",Toast.LENGTH_SHORT).show();
+            if(request==201){try(java.io.InputStream in=new java.io.FileInputStream(new java.io.File(getFilesDir(),"speech-probe-recognition.wav"))){byte[] buffer=new byte[8192];int count;while((count=in.read(buffer))!=-1)out.write(buffer,0,count);}}
+            else out.write(history.text(5000).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Toast.makeText(this,request==201?"認識用音声を書き出しました":"会話履歴を書き出しました",Toast.LENGTH_SHORT).show();
         }catch(Exception e){Toast.makeText(this,"書き出せませんでした",Toast.LENGTH_LONG).show();}
     }
-    @Override protected void onDestroy(){if(history!=null)history.close();super.onDestroy();}
+    @Override protected void onDestroy(){if(probePlayer!=null){probePlayer.release();probePlayer=null;}if(history!=null)history.close();super.onDestroy();}
     private void requestJoin() {
         if (!room.getText().toString().trim().matches("[a-zA-Z0-9_-]{1,32}")) {
             Toast.makeText(this, "ルームIDは半角英数字・_・- の32文字以内です", Toast.LENGTH_LONG).show(); return;

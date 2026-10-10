@@ -430,6 +430,7 @@ public final class IntercomService extends Service {
         } catch (SecurityException e) { route = "Bluetoothの権限を許可し、接続を再確認してください"; }
         updateNotification();
     }
+    boolean startSpeechProbe(){return joined && connected && talking && speech!=null && speech.startProbe();}
     void toggleTalking() { setTalking(!talking); }
     void setTalking(boolean value) {
         boolean next = value && joined && connected && track != null && canUseAudio();

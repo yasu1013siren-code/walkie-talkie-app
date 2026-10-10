@@ -3,7 +3,7 @@ from pathlib import Path
 
 p = Path('android/app/build.gradle')
 s = p.read_text().replace("applicationId 'jp.es.staffintercom.preview'", "applicationId 'jp.es.staffintercom.personalspeech'")
-s = s.replace("versionName '0.2.9'", "versionName '0.2.9-personal-speech'")
+s = s.replace("versionName '0.2.10'", "versionName '0.2.10-personal-speech'")
 p.write_text(s)
 p = Path('android/app/src/main/AndroidManifest.xml')
 p.write_text(p.read_text().replace('android:label="スタッフインカム"', 'android:label="自分用インカム 文字起こし検証"'))

@@ -16,21 +16,23 @@ final class OfflineSpeech {
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new LinkedBlockingQueue<>(),new ThreadPoolExecutor.AbortPolicy());
     private volatile boolean enabled, closed, transmitting; private volatile int epoch;
     private volatile long sampleCount, lastAudioAt, dropped; private volatile int inputRate, inputChannels, rms, recognitionRms; private volatile int peak; private volatile String lastWords="", phase="準備待ち";
+    boolean startProbe(){if(!enabled || closed)return false;worker.execute(() -> probe.start());return true;}
     String diagnostic() {
         long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
-        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
+        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
     }
     private Model model; private Recognizer recognizer; private float rate;
     private final SpeechPcmBuffer pcmBuffer=new SpeechPcmBuffer();
+    private final SpeechProbe probe;
     private boolean lastTransmitting; private int lastEpoch; private long lastPartial;
-    OfflineSpeech(Context c, Listener l) { context=c.getApplicationContext(); listener=l; }
+    OfflineSpeech(Context c, Listener l) { context=c.getApplicationContext(); listener=l; probe=new SpeechProbe(context.getFilesDir()); }
     void enable(boolean value) {
         if (enabled == value || closed) return; enabled=value;
         worker.execute(() -> {
             if (closed) return;
             try {
                 if (enabled && model == null) { phase="モデル準備中"; listener.state("日本語モデルを準備中…"); model=new Model(unpack().getAbsolutePath()); }
-                if (!enabled && recognizer != null) { recognizer.close(); recognizer=null; }
+                if (!enabled) { probe.cancel(); if(recognizer != null) { recognizer.close(); recognizer=null; } }
                 phase=enabled?"待機中":"OFF"; listener.state(enabled ? "文字起こし待機中（相手の新版も必要）" : "文字起こし・音声操作OFF");
             } catch (Throwable e) { enabled=false; phase="初期化エラー（"+e.getClass().getSimpleName()+"）"; listener.state("音声認識を準備できませんでした。通話は継続できます"); }
         });
@@ -65,7 +67,7 @@ final class OfflineSpeech {
     private void recognitionFailed(Throwable e){enabled=false;phase="認識エラー（"+e.getClass().getSimpleName()+"）";listener.state("音声認識が停止しました。OFF→ONで再試行できます");}
     private void feedBuffered() throws Exception {
         byte[] pcm=pcmBuffer.take(); if(pcm.length==0 || recognizer==null)return;
-        rms=pcmRms(pcm); pcm=conditionForRecognition(pcm); recognitionRms=pcmRms(pcm);
+        rms=pcmRms(pcm); byte[] raw=pcm; pcm=conditionForRecognition(pcm); recognitionRms=pcmRms(pcm); probe.append(raw,pcm,(int)rate);
         boolean done=recognizer.acceptWaveForm(pcm,pcm.length);
         long now=android.os.SystemClock.elapsedRealtime();
         if(done)publish(recognizer.getResult(),true,lastTransmitting,lastEpoch);
@@ -75,6 +77,7 @@ final class OfflineSpeech {
         if(recognizer==null){pcmBuffer.take();return;}
         feedBuffered();publish(recognizer.getFinalResult(),true,lastTransmitting,lastEpoch);
         recognizer.close();recognizer=null;
+        probe.finish();
     }
     static byte[] monoForRecognition(byte[] input,int channels){
         if(channels<1 || channels>8)return new byte[0];
@@ -137,6 +140,6 @@ final class OfflineSpeech {
     }
     synchronized void close() {
         if(closed)return;closed=true;enabled=false;worker.getQueue().clear();
-        worker.execute(() -> {if(recognizer!=null)recognizer.close();if(model!=null)model.close();}); worker.shutdown();
+        worker.execute(() -> {probe.cancel();if(recognizer!=null)recognizer.close();if(model!=null)model.close();}); worker.shutdown();
     }
 }
