@@ -1,0 +1,41 @@
+name: Personal speech validation APK
+on:
+  push:
+    branches: ['personal/transcription-20261010']
+    paths: ['android/**', 'scripts/configure-personal-speech.py', '.github/workflows/personal-speech.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Prepare Japanese offline model and personal configuration
+        run: |
+          mkdir -p android/app/src/main/assets
+          curl --fail --location --retry 3 --max-time 180 https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip -o android/app/src/main/assets/speech-ja.zip
+          python3 -m zipfile -t android/app/src/main/assets/speech-ja.zip
+          sha256sum android/app/src/main/assets/speech-ja.zip
+          python3 scripts/configure-personal-speech.py
+      - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Collect credential-free APK and disposable signing tools
+        run: |
+          mkdir -p speech-output
+          cp android/app/build/outputs/apk/debug/app-debug.apk speech-output/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" speech-output/
+          cp "$HOME/.android/debug.keystore" speech-output/disposable-debug.keystore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intercom-personal-speech-validation
+          path: speech-output/
+          retention-days: 1
