@@ -10,3 +10,5 @@ node_modules/
 android/.gradle/
 android/**/build/
 android/local.properties
+
+android/app/src/main/assets/personal-access.txt

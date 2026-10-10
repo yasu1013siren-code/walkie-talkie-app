@@ -1,25 +1,13 @@
-# 自分用インカム 文字起こし検証版
+# Personal intercom v0.2.14
 
-両端末に同じ検証版をインストールする。アプリIDはjp.es.staffintercom.personalspeechで、既存版を残せる。旧版と新版を同じ端末で同時に通話へ参加させない。既存の期限なし自分用ルーム・認証を維持し、サーバー変更を必要としない。
+The personal Android client contains only native intercom audio, receive gain, headset button controls, and background session handling. Speech recognition, captions, conversation history, speech commands, audio probes, Vosk and JNA have been removed.
 
-## 実装
+The package remains `jp.es.staffintercom.personalspeech` to allow updating v0.2.13 without uninstalling. Version code is 28. The personal access asset and signing key are private and must not be committed. A local authorized build restores `android/app/src/main/assets/personal-access.txt` and signs with the existing personal speech key.
 
-WebRTC録音のPCMを非同期でVosk日本語小型モデルへ渡す。二重の録音を開かない。音声は認識サービスへ送らず端末内で処理する。話した端末の文字を認証されたWebRTC接続のDataChannelで相手へ届ける。相手名は接続情報から取得し、受信文字から音声操作を実行しない。
+Build using JDK 17, Android SDK 35, and Gradle 8.13:
 
-途中表示は300ms間隔、確定文字は私有SQLiteに最新5000件保存。途中結果は保存しない。ON/OFF、テキスト書き出し、削除を提供する。文字履歴であり音声ファイルの録音機能は含まない。バックアップは無効。
+```sh
+gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon
+```
 
-音声操作は初期OFF。開始・停止の完全一致フレーズを端末側だけで評価する。標準は「インカム開始」「インカム停止」。声で開始した送信は30秒で停止。相手との通話接続による録音開始後に機能する。アプリ未起動・未参加の状態から声だけでマイクやルーム接続を開始する機能は含まない。
-
-## 検証
-
-- 自動：PCM 8/16/48kHz変換、ステレオ混合、曖昧な命令の拒否、文字履歴の再起動後保持・削除、既存Android回帰試験、APKビルド。
-- 実機で必要：Bluetooth送受信、両方向の途中文字と確定文字、画面OFFでの履歴追記、端末再起動後の保存履歴、書き出し、開始/停止命令、30秒停止、通信切断復帰。
-- 日本語認識の誤り・遅延・Bluetooth待機中のマイク取得・画面OFFの音声命令・電池負荷は自動試験だけでは確認できない。ユーザーによる実機結果が必要。
-
-## ライセンス
-
-Vosk APIとvosk-model-small-ja-0.22はApache-2.0。公式モデル一覧 https://alphacephei.com/vosk/models 。依存バージョンはVosk Android 0.3.75、JNA 5.18.1。
-
-## ビルドと配布
-
-GitHubでは接続用の招待キーを含めないAPKをビルドし、テストする。自分用接続情報は取得したAPKへローカルで追加し、再署名する。完成した個人用APKは公開リポジトリやGitHubの成果物へアップロードしない。
+CI produces a credential-free unsigned-for-update debug build. On-device Bluetooth and screen-off audio must still be verified on both phones.

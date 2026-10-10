@@ -1,8 +1,8 @@
-name: Personal speech validation APK
+name: Personal intercom APK
 on:
   push:
-    branches: ['personal/transcription-20261010']
-    paths: ['android/**', 'scripts/configure-personal-speech.py', '.github/workflows/personal-speech.yml']
+    branches: ['personal/no-transcription-20261010']
+    paths: ['android/**', '.github/workflows/personal-speech.yml']
 permissions:
   contents: read
   actions: read
@@ -20,13 +20,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.13'
-      - name: Prepare Japanese offline model and personal configuration
-        run: |
-          mkdir -p android/app/src/main/assets
-          curl --fail --location --retry 3 --max-time 180 https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip -o android/app/src/main/assets/speech-ja.zip
-          python3 -m zipfile -t android/app/src/main/assets/speech-ja.zip
-          sha256sum android/app/src/main/assets/speech-ja.zip
-          python3 scripts/configure-personal-speech.py
       - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug --no-daemon
       - name: Collect credential-free APK and disposable signing tools
         run: |
@@ -39,6 +32,6 @@ jobs:
           cp -r android/app/build/test-results/testDebugUnitTest speech-output/test-results
       - uses: actions/upload-artifact@v4
         with:
-          name: intercom-personal-speech-validation
+          name: intercom-personal-no-transcription
           path: speech-output/
           retention-days: 1
