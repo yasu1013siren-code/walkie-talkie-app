@@ -1,27 +1,5 @@
-"""Reuse the existing personal APK's credential; never commit or log it."""
+"""Prepare a credential-free APK; personal access is added locally after building."""
 from pathlib import Path
-import hashlib, json, struct, zipfile
-
-archive = Path('personal-base/intercom-personal.apk')
-policy = json.loads(Path('personal-base/personal-policy.json').read_text())
-digest = policy['personal']['rooms']['main']['invites'][0]['sha256']
-key = None
-with zipfile.ZipFile(archive) as apk:
-    for name in apk.namelist():
-        if not name.endswith('.dex'):
-            continue
-        data = apk.read(name)
-        count, offset = struct.unpack_from('<II', data, 0x38)
-        for i in range(count):
-            p = struct.unpack_from('<I', data, offset + i * 4)[0]
-            while data[p] & 128:
-                p += 1
-            p += 1
-            value = data[p:data.index(0, p)].decode('utf-8', errors='replace')
-            if hashlib.sha256(value.encode()).hexdigest() == digest:
-                key = value
-assert key and len(key) == 43, 'Existing personal invitation not found'
-print('::add-mask::' + key)
 
 p = Path('android/app/build.gradle')
 s = p.read_text().replace("applicationId 'jp.es.staffintercom.preview'", "applicationId 'jp.es.staffintercom.personalspeech'")
@@ -44,10 +22,10 @@ once('room.setText(prefs.getString("room", "es")); name.setText(prefs.getString(
      'room.setText("main"); name.setText(prefs.getString("name", android.os.Build.MODEL.substring(0, Math.min(25, android.os.Build.MODEL.length())) + "-" + java.util.UUID.randomUUID().toString().substring(0,4)));')
 once('root.addView(room); root.addView(name);', 'root.addView(name);')
 once('store.setText(prefs.getString("storeId", "")); root.addView(store);', 'store.setText("personal");')
-once('root.addView(invite);', 'invite.setText(' + json.dumps(key) + ');')
+once('root.addView(invite);', 'invite.setText(personalInvite());')
 once('prefs.getBoolean("headsetCalls", false)', 'prefs.getBoolean("headsetCalls", true)')
 once('join = button(root, "ルームに参加", v -> requestJoin());', 'join = button(root, "通話に接続", v -> requestJoin());')
-once('private void requestJoin() {', 'private void requestJoin() {\n        room.setText("main"); store.setText("personal"); invite.setText(' + json.dumps(key) + ');')
+once('private void requestJoin() {', 'private String personalInvite() {\n        try (java.io.InputStream input = getAssets().open("personal-access.txt")) {\n            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();\n            byte[] bytes = new byte[256]; int n;\n            while ((n = input.read(bytes)) != -1) out.write(bytes, 0, n);\n            return out.toString("UTF-8").trim();\n        } catch (java.io.IOException e) { return ""; }\n    }\n    private void requestJoin() {\n        room.setText("main"); store.setText("personal"); invite.setText(personalInvite());')
 once('getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("storeId", store.getText().toString().trim()).putString("room", room.getText().toString().trim()).putString("name", name.getText().toString().trim()).apply();',
      'getSharedPreferences("intercom", MODE_PRIVATE).edit().putString("name", name.getText().toString().trim()).apply();')
 p.write_text(s)
