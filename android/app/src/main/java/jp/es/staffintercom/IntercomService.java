@@ -260,7 +260,7 @@ public final class IntercomService extends Service {
             public void state(String text) { main.post(() -> speechState=text); }
         });
         speech.enable(transcribeEnabled || voiceCommands);
-        audioModule = JavaAudioDeviceModule.builder(this).setSamplesReadyCallback(samples -> { OfflineSpeech current=speech; if(current!=null)current.samples(samples); }).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true).createAudioDeviceModule();
+        audioModule = JavaAudioDeviceModule.builder(this).setSamplesReadyCallback(samples -> { OfflineSpeech current=speech; if(current!=null)current.samples(samples); }).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(false).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();
         source = factory.createAudioSource(new MediaConstraints());
         track = factory.createAudioTrack("intercom-audio", source); track.setEnabled(false); initialized = true;

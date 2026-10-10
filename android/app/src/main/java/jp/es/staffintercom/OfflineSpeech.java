@@ -15,10 +15,10 @@ final class OfflineSpeech {
     private final Context context; private final Listener listener;
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new LinkedBlockingQueue<>(),new ThreadPoolExecutor.AbortPolicy());
     private volatile boolean enabled, closed, transmitting; private volatile int epoch;
-    private volatile long sampleCount, lastAudioAt, dropped; private volatile int inputRate, inputChannels, rms; private volatile int peak; private volatile String lastWords="", phase="準備待ち";
+    private volatile long sampleCount, lastAudioAt, dropped; private volatile int inputRate, inputChannels, rms, recognitionRms; private volatile int peak; private volatile String lastWords="", phase="準備待ち";
     String diagnostic() {
         long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
-        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
+        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
     }
     private Model model; private Recognizer recognizer; private float rate;
     private final SpeechPcmBuffer pcmBuffer=new SpeechPcmBuffer();
@@ -65,7 +65,7 @@ final class OfflineSpeech {
     private void recognitionFailed(Throwable e){enabled=false;phase="認識エラー（"+e.getClass().getSimpleName()+"）";listener.state("音声認識が停止しました。OFF→ONで再試行できます");}
     private void feedBuffered() throws Exception {
         byte[] pcm=pcmBuffer.take(); if(pcm.length==0 || recognizer==null)return;
-        rms=pcmRms(pcm); pcm=conditionForRecognition(pcm);
+        rms=pcmRms(pcm); pcm=conditionForRecognition(pcm); recognitionRms=pcmRms(pcm);
         boolean done=recognizer.acceptWaveForm(pcm,pcm.length);
         long now=android.os.SystemClock.elapsedRealtime();
         if(done)publish(recognizer.getResult(),true,lastTransmitting,lastEpoch);
@@ -89,7 +89,12 @@ final class OfflineSpeech {
     }
     static byte[] conditionForRecognition(byte[] input){
         int level=pcmRms(input);if(level<30)return input;
-        double gain=Math.min(8.0,Math.max(1.0,1500.0/level));
+        // Raw AudioRecord samples precede WebRTC's automatic gain control.
+        // Quiet Bluetooth PCM needs more gain than the old 8x cap. Keep headroom
+        // for every sample so transients do not clip or alter the transmitted audio.
+        int maximum=0;
+        for(int i=0;i+1<input.length;i+=2)maximum=Math.max(maximum,Math.abs((short)((input[i]&255)|(input[i+1]<<8))));
+        double gain=Math.max(1.0,Math.min(Math.min(32.0,1500.0/level),30000.0/maximum));
         byte[] output=new byte[input.length];
         for(int i=0;i+1<input.length;i+=2){int value=(short)((input[i]&255)|(input[i+1]<<8));value=(int)Math.max(-32768,Math.min(32767,Math.round(value*gain)));output[i]=(byte)value;output[i+1]=(byte)(value>>8);}
         return output;
