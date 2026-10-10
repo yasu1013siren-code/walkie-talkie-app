@@ -58,6 +58,11 @@ public final class MainActivity extends Activity {
             if (service != null) service.setHeadsetCalls(checked);
         });
         root.addView(headsetMode);
+        button(root,"S10ボタン操作を再登録",v -> {
+            if(service==null || !service.isJoined()){Toast.makeText(this,"通話に接続してから再登録してください",Toast.LENGTH_SHORT).show();return;}
+            if(!headsetMode.isChecked())headsetMode.setChecked(true);else service.setHeadsetCalls(true);
+            service.selectAudioRoute(); render();
+        });
         transcriptionMode = new CheckBox(this); transcriptionMode.setText("会話をリアルタイムで文字表示");
         transcriptionMode.setChecked(prefs.getBoolean("transcribe",true)); root.addView(transcriptionMode);
         saveMode = new CheckBox(this); saveMode.setText("確定した文字を端末に保存（最新5000件）");
@@ -72,6 +77,8 @@ public final class MainActivity extends Activity {
         route = new TextView(this); route.setTextSize(15); root.addView(route);
         headsetState = new TextView(this); root.addView(headsetState);
         speechStatus = new TextView(this); root.addView(speechStatus);
+        TextView heading = new TextView(this); heading.setText("最近の会話（文字起こし）"); heading.setTextSize(20); root.addView(heading);
+        conversationText = new TextView(this); conversationText.setTextIsSelectable(true); root.addView(conversationText);
         gainLabel = new TextView(this); root.addView(gainLabel);
         gainControl = new SeekBar(this); gainControl.setMax(4);
         float savedGain = IntercomService.normalizeReceiveGain(prefs.getFloat("receiveGain", 2f));
@@ -108,8 +115,6 @@ public final class MainActivity extends Activity {
         TextView speechHelp = new TextView(this); speechHelp.setText("文字起こしは両端末を新版に更新してください。話した端末が音声を認識し、相手へ文字を送ります。途中の文字は訂正される場合があります。\n音声操作は通話接続後に開始・停止の言葉だけを話してください。声で開始した送信は30秒で自動停止します。画面やイヤホンのボタンも使えます。\n初回は日本語モデルの準備に時間がかかります。文字起こしの精度・Bluetooth・画面OFF中の音声操作は実機で確認してください。"); root.addView(speechHelp);
         button(root,"会話履歴を書き出す",v -> startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/plain").putExtra(Intent.EXTRA_TITLE,"intercom-conversation.txt"),200));
         button(root,"会話履歴を削除",v -> new android.app.AlertDialog.Builder(this).setMessage("この端末に保存した文字の履歴を削除しますか？").setNegativeButton("戻る",null).setPositiveButton("削除",(d,w)->{history.clear();if(service!=null)service.clearRecentConversation();render();}).show());
-        TextView heading = new TextView(this); heading.setText("最近の会話（文字起こし）"); heading.setTextSize(20); root.addView(heading);
-        conversationText = new TextView(this); conversationText.setTextIsSelectable(true); root.addView(conversationText);
         ScrollView scroll = new ScrollView(this); scroll.addView(root);
         scroll.setOnApplyWindowInsetsListener((view, insets) -> {
             int left, top, right, bottom;

@@ -15,6 +15,11 @@ final class OfflineSpeech {
     private final Context context; private final Listener listener;
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(120),new ThreadPoolExecutor.DiscardPolicy());
     private volatile boolean enabled, closed, transmitting; private volatile int epoch;
+    private volatile long sampleCount, lastAudioAt; private volatile int peak; private volatile String lastWords="", phase="準備待ち";
+    String diagnostic() {
+        long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
+        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + "\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
+    }
     private Model model; private Recognizer recognizer; private float rate;
     private boolean lastTransmitting; private int lastEpoch; private long lastPartial;
     OfflineSpeech(Context c, Listener l) { context=c.getApplicationContext(); listener=l; }
@@ -23,17 +28,19 @@ final class OfflineSpeech {
         worker.execute(() -> {
             if (closed) return;
             try {
-                if (enabled && model == null) { listener.state("日本語モデルを準備中…"); model=new Model(unpack().getAbsolutePath()); }
+                if (enabled && model == null) { phase="モデル準備中"; listener.state("日本語モデルを準備中…"); model=new Model(unpack().getAbsolutePath()); }
                 if (!enabled && recognizer != null) { recognizer.close(); recognizer=null; }
-                listener.state(enabled ? "文字起こし待機中（相手の新版も必要）" : "文字起こし・音声操作OFF");
-            } catch (Throwable e) { enabled=false; listener.state("音声認識を準備できませんでした。通話は継続できます"); }
+                phase=enabled?"待機中":"OFF"; listener.state(enabled ? "文字起こし待機中（相手の新版も必要）" : "文字起こし・音声操作OFF");
+            } catch (Throwable e) { enabled=false; phase="初期化エラー（"+e.getClass().getSimpleName()+"）"; listener.state("音声認識を準備できませんでした。通話は継続できます"); }
         });
     }
     boolean current(int token) { return token == epoch; }
     void transmission(boolean value) { transmitting=value; epoch++; }
     void samples(JavaAudioDeviceModule.AudioSamples samples) {
         if (!enabled || closed || samples.getAudioFormat()!=AudioFormat.ENCODING_PCM_16BIT) return;
-        byte[] data=samples.getData().clone(); int channels=samples.getChannelCount(), sampleRate=samples.getSampleRate();
+        byte[] data=samples.getData().clone(); sampleCount++; lastAudioAt=android.os.SystemClock.elapsedRealtime();
+        int volume=0; for(int i=0;i+1<data.length;i+=2)volume=Math.max(volume,Math.abs((short)((data[i]&255)|(data[i+1]<<8)))); peak=volume;
+        int channels=samples.getChannelCount(), sampleRate=samples.getSampleRate();
         boolean sent=transmitting; int token=epoch;
         worker.execute(() -> decode(data, channels, sampleRate, sent, token));
     }
@@ -49,10 +56,11 @@ final class OfflineSpeech {
             long now=android.os.SystemClock.elapsedRealtime();
             if (done) publish(recognizer.getResult(),true,sent,token);
             else if (now-lastPartial>=300) { lastPartial=now; publish(recognizer.getPartialResult(),false,sent,token); }
-        } catch (Throwable e) { enabled=false; listener.state("音声認識が停止しました。OFF→ONで再試行できます"); }
+        } catch (Throwable e) { enabled=false; phase="認識エラー（"+e.getClass().getSimpleName()+"）"; listener.state("音声認識が停止しました。OFF→ONで再試行できます"); }
     }
     private void publish(String json, boolean done, boolean sent, int token) throws Exception {
         String text=new JSONObject(json).optString(done?"text":"partial", "").trim();
+        if(!text.isEmpty()) { lastWords=text; phase=done?"確定文字あり":"認識中"; }
         listener.text(text,done,sent,token);
     }
     static byte[] convert(byte[] in, int channels, int sampleRate) {

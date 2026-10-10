@@ -37,7 +37,10 @@ public final class IntercomService extends Service {
     private long textSequence, lastVoiceCommand;
     private final Runnable voiceTimeout = () -> setTalking(false);
     void clearRecentConversation() { recentText.clear(); partialText.clear(); }
-    String getSpeechState() { return speechState; }
+    String getSpeechState() {
+        int open=0; for(Peer p:peers.values())if(p.textChannel!=null && p.textChannel.state()==DataChannel.State.OPEN)open++;
+        return speechState + "\n文字通信：" + open + "/" + peers.size() + "台" + (speech==null?"":"\n"+speech.diagnostic());
+    }
     String getConversation() {
         StringBuilder out = new StringBuilder(saveConversation ? conversation.text(100) : String.join("\n\n", recentText));
         for (String line : partialText.values()) out.append("\n").append(line).append(" …\n");
