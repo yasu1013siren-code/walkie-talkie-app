@@ -21,15 +21,17 @@ final class OfflineSpeech {
     boolean startProbe(){if(!enabled || closed)return false;worker.execute(() -> probe.start());return true;}
     String diagnostic() {
         long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
-        return "音声入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n取得経路："+inputLabel+"\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n認識文字："+lastWords);
+        return "音声入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n取得経路："+inputLabel+"\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち（100ms単位） "+worker.getQueue().size()+"\n"+probe.status()+"\n認識処理：16000Hz\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n認識文字："+lastWords);
     }
     private Model model; private Recognizer recognizer; private float rate;
     private final SpeechPcmBuffer pcmBuffer=new SpeechPcmBuffer();
+    private final SpeechPcmBuffer incomingBatch=new SpeechPcmBuffer();
     private final SpeechProbe probe;
     private boolean lastTransmitting; private int lastEpoch; private long lastPartial;
     OfflineSpeech(Context c, Listener l) { context=c.getApplicationContext(); listener=l; probe=new SpeechProbe(context.getFilesDir()); }
-    void enable(boolean value) {
+    synchronized void enable(boolean value) {
         if (enabled == value || closed) return; enabled=value;
+        if(!value)incomingBatch.take();
         worker.execute(() -> {
             if (closed) return;
             try {
@@ -42,6 +44,7 @@ final class OfflineSpeech {
     boolean current(int token) { return token == epoch; }
     synchronized void transmission(boolean value) {
         if(closed)return;
+        flushIncoming();
         int previous=epoch; transmitting=value; epoch++;
         worker.execute(() -> { if(closed || recognizer==null || lastEpoch!=previous)return;
             try { finishRecognition(); } catch(Throwable e){recognitionFailed(e);} });
@@ -51,17 +54,23 @@ final class OfflineSpeech {
         if (!enabled || closed || audioFormat!=AudioFormat.ENCODING_PCM_16BIT) return;
         byte[] data=AudioPcmCopy.copy(buffer,bytesRead); if(data.length==0){captureFailed();return;} sampleCount++; lastAudioAt=android.os.SystemClock.elapsedRealtime();
         int volume=0; for(int i=0;i+1<data.length;i+=2)volume=Math.max(volume,Math.abs((short)((data[i]&255)|(data[i+1]<<8)))); peak=volume;
+        if(inputRate!=0 && (inputRate!=sampleRate || inputChannels!=channels))flushIncoming();
         inputRate=sampleRate; inputChannels=channels;
-        if(worker.getQueue().size()>=600){dropped++;return;}
-        boolean sent=transmitting; int token=epoch;
-        worker.execute(() -> decode(data, channels, sampleRate, sent, token));
+        incomingBatch.append(monoForRecognition(data,channels));
+        if(incomingBatch.ready(sampleRate))flushIncoming();
+    }
+    private void flushIncoming(){
+        byte[] pcm=incomingBatch.take();if(pcm.length==0 || closed)return;
+        if(worker.getQueue().size()>=60){dropped++;return;}
+        int sampleRate=inputRate,token=epoch;boolean sent=transmitting;
+        worker.execute(() -> decode(pcm,1,sampleRate,sent,token));
     }
     private void decode(byte[] data, int channels, int sampleRate, boolean sent, int token) {
         if (closed || !enabled || model == null || channels < 1 || sampleRate < 8000) return;
         try {
             if (recognizer == null || rate != sampleRate || token != lastEpoch) {
                 finishRecognition();
-                recognizer=new Recognizer(model,sampleRate); rate=sampleRate; lastEpoch=token; lastTransmitting=sent;
+                recognizer=new Recognizer(model,16000); rate=sampleRate; lastEpoch=token; lastTransmitting=sent;
             }
             pcmBuffer.append(monoForRecognition(data,channels));
             if(pcmBuffer.ready(sampleRate))feedBuffered();
@@ -71,6 +80,7 @@ final class OfflineSpeech {
     private void feedBuffered() throws Exception {
         byte[] pcm=pcmBuffer.take(); if(pcm.length==0 || recognizer==null)return;
         rms=pcmRms(pcm); byte[] raw=pcm; pcm=conditionForRecognition(pcm); recognitionRms=pcmRms(pcm); probe.append(raw,pcm,(int)rate);
+        pcm=SpeechResample.to16k(pcm,(int)rate);
         boolean done=recognizer.acceptWaveForm(pcm,pcm.length);
         long now=android.os.SystemClock.elapsedRealtime();
         if(done)publish(recognizer.getResult(),true,lastTransmitting,lastEpoch);
@@ -142,7 +152,7 @@ final class OfflineSpeech {
         return new File(dir,"vosk-model-small-ja-0.22");
     }
     synchronized void close() {
-        if(closed)return;closed=true;enabled=false;worker.getQueue().clear();
+        if(closed)return;closed=true;enabled=false;incomingBatch.take();worker.getQueue().clear();
         worker.execute(() -> {probe.cancel();if(recognizer!=null)recognizer.close();if(model!=null)model.close();}); worker.shutdown();
     }
 }
