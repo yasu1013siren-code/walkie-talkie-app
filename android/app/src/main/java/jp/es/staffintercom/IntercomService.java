@@ -39,7 +39,11 @@ public final class IntercomService extends Service {
     void clearRecentConversation() { recentText.clear(); partialText.clear(); }
     String getSpeechState() {
         int open=0; for(Peer p:peers.values())if(p.textChannel!=null && p.textChannel.state()==DataChannel.State.OPEN)open++;
-        return speechState + "\n文字通信：" + open + "/" + peers.size() + "台" + (speech==null?"":"\n"+speech.diagnostic());
+        return speechState + "\n文字通信：" + open + "/" + peers.size() + "台" + receivedDiagnostic();
+    }
+    private String receivedDiagnostic(){
+        for(Peer peer:peers.values())if(peer.receivedSpeech!=null)return "\n"+peer.receivedSpeech.diagnostic();
+        return "\n受信文字起こし：相手の音声接続待ち";
     }
     String getConversation() {
         StringBuilder out = new StringBuilder(saveConversation ? conversation.text(100) : String.join("\n\n", recentText));
@@ -51,7 +55,8 @@ public final class IntercomService extends Service {
         startWord = start; stopWord = stop;
         if (!transcription) partialText.clear();
         if (!commands) main.removeCallbacks(voiceTimeout);
-        if (speech != null) speech.enable(transcription || commands);
+        if (speech != null) speech.enable(commands);
+        for(Peer peer:peers.values())if(peer.receivedSpeech!=null)peer.receivedSpeech.enable(transcription);
     }
     private void ownText(String text, boolean complete, boolean sent, int epoch) {
         if (!joined || speech == null) return;
@@ -66,12 +71,6 @@ public final class IntercomService extends Service {
             }
             return;
         }
-        if (!transcribeEnabled || !sent || (voiceCommands && command != 0)) return;
-        showText("self", userName.isEmpty() ? "自分" : userName, text, complete);
-        JSONObject packet = json("v", 1, "seq", ++textSequence, "text", ConversationStore.clean(text,2000), "final", complete);
-        byte[] bytes = packet.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        for (Peer peer : peers.values()) if (peer.textChannel != null && peer.textChannel.state() == DataChannel.State.OPEN && peer.textChannel.bufferedAmount() < 32768)
-            peer.textChannel.send(new DataChannel.Buffer(java.nio.ByteBuffer.wrap(bytes), false));
     }
     private void showText(String id, String speaker, String text, boolean complete) {
         text = ConversationStore.clean(text,2000); speaker = ConversationStore.clean(speaker,40);
@@ -100,7 +99,9 @@ public final class IntercomService extends Service {
                         if(data.optInt("v")!=1 || !(data.opt("text") instanceof String) || !(data.opt("final") instanceof Boolean))return;
                         long seq=data.optLong("seq",-1); if(seq<=peer.lastTextSequence)return;
                         String text=data.getString("text"); if(text.length()>2000)return; peer.lastTextSequence=seq;
-                        showText(peer.id,peer.name,text,data.getBoolean("final"));
+                        if(data.optBoolean("receivedCaption",false))
+                            showText("self",userName.isEmpty()?"自分":userName,text,data.getBoolean("final"));
+                        else if(peer.receivedSpeech==null)showText(peer.id,peer.name,text,data.getBoolean("final"));
                     } catch(JSONException ignored) {}
                 });
             }
@@ -259,7 +260,7 @@ public final class IntercomService extends Service {
             public void text(String text, boolean complete, boolean sent, int epoch) { main.post(() -> ownText(text,complete,sent,epoch)); }
             public void state(String text) { main.post(() -> speechState=text); }
         });
-        speech.enable(transcribeEnabled || voiceCommands);
+        speech.enable(voiceCommands);
         audioModule = JavaAudioDeviceModule.builder(this).setAudioBufferCallback((buffer,format,channels,sampleRate,bytesRead,captureTimeNs) -> {
             // Snapshot the direct microphone buffer before native WebRTC can reuse
             // it. Preserve both the buffer contents/state and the capture timestamp.
@@ -378,10 +379,38 @@ public final class IntercomService extends Service {
         void failed(String error) { main.post(() -> { if (peer.live()) { status = "音声接続に失敗しました。退出して再参加してください"; updateNotification(); android.util.Log.w("StaffIntercom", "Peer negotiation failed"); } }); }
     }
     private final class Peer implements PeerConnection.Observer {
-        final String id, name; DataChannel textChannel; long lastTextSequence=-1,textWindow; int textCount; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
+        final String id, name; volatile OfflineSpeech receivedSpeech; org.webrtc.AudioTrackSink receivedSink; DataChannel textChannel; long lastTextSequence=-1,textWindow; int textCount; AudioTrack remoteAudio; PeerConnection pc; boolean remoteReady; final List<IceCandidate> pending = new ArrayList<>();
         Peer(String id, String name) { this.id = id; this.name = name; }
         boolean live() { return joined && peers.get(id) == this && pc != null; }
-        void close() { partialText.remove(id); if(textChannel!=null){textChannel.unregisterObserver();textChannel.close();textChannel.dispose();textChannel=null;} remoteAudio = null; if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
+        void close() { partialText.remove(id); if(textChannel!=null){textChannel.unregisterObserver();textChannel.close();textChannel.dispose();textChannel=null;} detachReceivedSpeech(); remoteAudio = null; if (pc != null) { pc.close(); pc.dispose(); pc = null; } pending.clear(); }
+        void attachReceivedSpeech(){
+            receivedSpeech=new OfflineSpeech(IntercomService.this,new OfflineSpeech.Listener(){
+                public void state(String text){main.post(() -> {if(live())speechState="受信音声："+text;});}
+                public void text(String text,boolean complete,boolean sent,int epoch){main.post(() -> {
+                    if(!live() || !transcribeEnabled)return;
+                    if(SpeechRules.command(text,startWord,stopWord)!=0)return;
+                    showText(id,name,text,complete);
+                    if(textChannel!=null && textChannel.state()==DataChannel.State.OPEN && textChannel.bufferedAmount()<32768){
+                        JSONObject packet=json("v",1,"seq",++textSequence,"text",ConversationStore.clean(text,2000),"final",complete,"receivedCaption",true);
+                        textChannel.send(new DataChannel.Buffer(java.nio.ByteBuffer.wrap(packet.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)),false));
+                    }
+                });}
+            });
+            receivedSpeech.inputLabel("相手の受信音声（通話デコード後）");
+            receivedSpeech.enable(transcribeEnabled);
+            receivedSink=(buffer,bits,rate,channels,frames,timestamp) -> {
+                OfflineSpeech current=receivedSpeech;
+                int bytes=ReceivedAudioPcm.byteCount(bits,channels,frames,buffer==null?0:buffer.capacity());
+                if(current!=null && bytes>0)try{current.samples(buffer,android.media.AudioFormat.ENCODING_PCM_16BIT,channels,rate,bytes);}
+                catch(RuntimeException ignored){current.captureFailed();}
+            };
+            remoteAudio.addSink(receivedSink);
+        }
+        void detachReceivedSpeech(){
+            if(remoteAudio!=null && receivedSink!=null)remoteAudio.removeSink(receivedSink);
+            receivedSink=null;
+            OfflineSpeech old=receivedSpeech;receivedSpeech=null;if(old!=null)old.close();
+        }
         public void onIceCandidate(IceCandidate candidate) { main.post(() -> sendSignal(this, json("candidate", candidate.sdp, "sdpMid", candidate.sdpMid, "sdpMLineIndex", candidate.sdpMLineIndex))); }
         public void onConnectionChange(PeerConnection.PeerConnectionState state) {
             main.post(() -> { if (live() && state == PeerConnection.PeerConnectionState.FAILED) { status = "音声接続に失敗しました。ネットワークを確認し、再参加してください"; updateNotification(); } });
@@ -401,7 +430,8 @@ public final class IntercomService extends Service {
                 if (!live()) return;
                 MediaStreamTrack received = receiver.track();
                 if (received instanceof AudioTrack) {
-                    remoteAudio = (AudioTrack) received;
+                    AudioTrack incoming=(AudioTrack)received;
+                    if(remoteAudio!=incoming){detachReceivedSpeech();remoteAudio=incoming;attachReceivedSpeech();}
                     remoteAudio.setVolume(receiveGain);
                 }
             });
@@ -436,7 +466,11 @@ public final class IntercomService extends Service {
         } catch (SecurityException e) { route = "Bluetoothの権限を許可し、接続を再確認してください"; }
         updateNotification();
     }
-    boolean startSpeechProbe(){return joined && connected && talking && speech!=null && speech.startProbe();}
+    boolean startSpeechProbe(){
+        if(!joined || !connected || !transcribeEnabled)return false;
+        for(Peer peer:peers.values())if(peer.receivedSpeech!=null)return peer.receivedSpeech.startProbe();
+        return false;
+    }
     void toggleTalking() { setTalking(!talking); }
     void setTalking(boolean value) {
         boolean next = value && joined && connected && track != null && canUseAudio();

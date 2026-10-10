@@ -16,10 +16,12 @@ final class OfflineSpeech {
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new LinkedBlockingQueue<>(),new ThreadPoolExecutor.AbortPolicy());
     private volatile boolean enabled, closed, transmitting; private volatile int epoch;
     private volatile long sampleCount, lastAudioAt, dropped; private volatile int inputRate, inputChannels, rms, recognitionRms; private volatile int peak; private volatile String lastWords="", phase="準備待ち";
+    private volatile String inputLabel="通話入力の直接バッファ";
+    void inputLabel(String value){inputLabel=value;}
     boolean startProbe(){if(!enabled || closed)return false;worker.execute(() -> probe.start());return true;}
     String diagnostic() {
         long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
-        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n取得経路：通話入力の直接バッファ\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
+        return "音声入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n取得経路："+inputLabel+"\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n認識文字："+lastWords);
     }
     private Model model; private Recognizer recognizer; private float rate;
     private final SpeechPcmBuffer pcmBuffer=new SpeechPcmBuffer();
@@ -31,7 +33,7 @@ final class OfflineSpeech {
         worker.execute(() -> {
             if (closed) return;
             try {
-                if (enabled && model == null) { phase="モデル準備中"; listener.state("日本語モデルを準備中…"); model=new Model(unpack().getAbsolutePath()); }
+                if (enabled && model == null) { phase="モデル準備中"; listener.state("日本語モデルを準備中…"); synchronized(OfflineSpeech.class){model=new Model(unpack().getAbsolutePath());} }
                 if (!enabled) { probe.cancel(); if(recognizer != null) { recognizer.close(); recognizer=null; } }
                 phase=enabled?"待機中":"OFF"; listener.state(enabled ? "文字起こし待機中（相手の新版も必要）" : "文字起こし・音声操作OFF");
             } catch (Throwable e) { enabled=false; phase="初期化エラー（"+e.getClass().getSimpleName()+"）"; listener.state("音声認識を準備できませんでした。通話は継続できます"); }

@@ -78,10 +78,10 @@ public final class MainActivity extends Activity {
         route = new TextView(this); route.setTextSize(15); root.addView(route);
         headsetState = new TextView(this); root.addView(headsetState);
         speechStatus = new TextView(this); root.addView(speechStatus);
-        button(root,"認識用音声を5秒録音（端末内のみ）",v -> {
+        button(root,"相手の受信音声を5秒録音（端末内のみ）",v -> {
             if(probePlayer!=null){probePlayer.release();probePlayer=null;}
-            if(service==null || !service.startSpeechProbe())Toast.makeText(this,"文字起こしをONにし、送信を開始してから押してください",Toast.LENGTH_LONG).show();
-            else Toast.makeText(this,"5秒ほど話してください。自動送信はしません",Toast.LENGTH_LONG).show();
+            if(service==null || !service.startSpeechProbe())Toast.makeText(this,"文字起こしをONにし、相手と接続してから押してください",Toast.LENGTH_LONG).show();
+            else Toast.makeText(this,"相手に5秒ほど話してもらってください。録音は端末内のみです",Toast.LENGTH_LONG).show();
         });
         button(root,"補正前の音声を再生",v -> playProbe(false));
         button(root,"認識に渡した音声を再生",v -> playProbe(true));
