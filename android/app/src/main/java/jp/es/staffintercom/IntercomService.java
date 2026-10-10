@@ -260,7 +260,13 @@ public final class IntercomService extends Service {
             public void state(String text) { main.post(() -> speechState=text); }
         });
         speech.enable(transcribeEnabled || voiceCommands);
-        audioModule = JavaAudioDeviceModule.builder(this).setSamplesReadyCallback(samples -> { OfflineSpeech current=speech; if(current!=null)current.samples(samples); }).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(false).createAudioDeviceModule();
+        audioModule = JavaAudioDeviceModule.builder(this).setAudioBufferCallback((buffer,format,channels,sampleRate,bytesRead,captureTimeNs) -> {
+            // Snapshot the direct microphone buffer before native WebRTC can reuse
+            // it. Preserve both the buffer contents/state and the capture timestamp.
+            OfflineSpeech current=speech;
+            if(current!=null)try{current.samples(buffer,format,channels,sampleRate,bytesRead);}catch(RuntimeException ignored){current.captureFailed();}
+            return captureTimeNs;
+        }).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(false).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();
         source = factory.createAudioSource(new MediaConstraints());
         track = factory.createAudioTrack("intercom-audio", source); track.setEnabled(false); initialized = true;

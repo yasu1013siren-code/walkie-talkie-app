@@ -4,7 +4,7 @@ import android.content.Context;
 import android.media.AudioFormat;
 import org.json.JSONObject;
 import org.vosk.*;
-import org.webrtc.audio.JavaAudioDeviceModule;
+import java.nio.ByteBuffer;
 import java.io.*;
 import java.util.concurrent.*;
 import java.util.zip.*;
@@ -19,7 +19,7 @@ final class OfflineSpeech {
     boolean startProbe(){if(!enabled || closed)return false;worker.execute(() -> probe.start());return true;}
     String diagnostic() {
         long age=android.os.SystemClock.elapsedRealtime()-lastAudioAt;
-        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
+        return "マイク入力：" + (sampleCount==0?"未取得":age>2000?"停止中":"取得中") + " / " + sampleCount + "回 / 音量 " + (age>2000?0:peak) + " / RMS " + rms + "\n取得経路：通話入力の直接バッファ\n入力形式："+inputRate+"Hz / "+inputChannels+"ch / 欠落 "+dropped+" / 処理待ち "+worker.getQueue().size()+"\n"+probe.status()+"\n認識用音量："+recognitionRms+" / 端末ノイズ抑制OFF\n認識：" + phase + (lastWords.isEmpty()?"":"\n自分の認識："+lastWords);
     }
     private Model model; private Recognizer recognizer; private float rate;
     private final SpeechPcmBuffer pcmBuffer=new SpeechPcmBuffer();
@@ -44,11 +44,12 @@ final class OfflineSpeech {
         worker.execute(() -> { if(closed || recognizer==null || lastEpoch!=previous)return;
             try { finishRecognition(); } catch(Throwable e){recognitionFailed(e);} });
     }
-    synchronized void samples(JavaAudioDeviceModule.AudioSamples samples) {
-        if (!enabled || closed || samples.getAudioFormat()!=AudioFormat.ENCODING_PCM_16BIT) return;
-        byte[] data=samples.getData().clone(); sampleCount++; lastAudioAt=android.os.SystemClock.elapsedRealtime();
+    void captureFailed(){phase="録音バッファをコピーできませんでした";}
+    synchronized void samples(ByteBuffer buffer,int audioFormat,int channels,int sampleRate,int bytesRead) {
+        if (!enabled || closed || audioFormat!=AudioFormat.ENCODING_PCM_16BIT) return;
+        byte[] data=AudioPcmCopy.copy(buffer,bytesRead); if(data.length==0){captureFailed();return;} sampleCount++; lastAudioAt=android.os.SystemClock.elapsedRealtime();
         int volume=0; for(int i=0;i+1<data.length;i+=2)volume=Math.max(volume,Math.abs((short)((data[i]&255)|(data[i+1]<<8)))); peak=volume;
-        int channels=samples.getChannelCount(), sampleRate=samples.getSampleRate(); inputRate=sampleRate; inputChannels=channels;
+        inputRate=sampleRate; inputChannels=channels;
         if(worker.getQueue().size()>=600){dropped++;return;}
         boolean sent=transmitting; int token=epoch;
         worker.execute(() -> decode(data, channels, sampleRate, sent, token));
