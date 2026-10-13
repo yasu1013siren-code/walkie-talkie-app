@@ -30,6 +30,7 @@ jobs:
           cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" speech-output/
           if [ -d "$ANDROID_HOME/build-tools/35.0.0/lib64" ]; then cp -r "$ANDROID_HOME/build-tools/35.0.0/lib64" speech-output/; fi
           cp -r android/app/build/test-results/testDebugUnitTest speech-output/test-results
+          if [ -d android/app/build/design-preview ]; then cp -r android/app/build/design-preview speech-output/; fi
       - uses: actions/upload-artifact@v4
         with:
           name: intercom-personal-no-transcription
