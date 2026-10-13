@@ -36,6 +36,16 @@ public class MainActivityDesignTest {
         toggle.performClick();assertEquals(View.VISIBLE,settings.getVisibility());
         toggle.performClick();assertEquals(View.GONE,settings.getVisibility());
         render(root,320,740,"design-narrow.png");
+        IntercomService session=new IntercomService();
+        set(session,"joined",true);set(session,"connected",true);set(session,"status","受信待機中　ルーム main（2人）");set(session,"route","音声出力：S10");
+        set(activity,"service",session);java.lang.reflect.Method update=MainActivity.class.getDeclaredMethod("render");update.setAccessible(true);update.invoke(activity);
+        assertNotNull(find(root,"2人で接続中"));assertTrue(find(root,"押しながら話す").isEnabled());assertFalse(find(root,"通話に接続").isEnabled());
+        render(root,360,920,"design-connected.png");
+        set(session,"talking",true);update.invoke(activity);assertNotNull(find(root,"送信を停止"));assertNotNull(find(root,"送信中"));
+        render(root,360,920,"design-transmitting.png");
+    }
+    private void set(Object target,String name,Object value) throws Exception {
+        java.lang.reflect.Field field=target.getClass().getDeclaredField(name);field.setAccessible(true);field.set(target,value);
     }
     private void render(View view,int width,int height,String name) throws Exception {
         view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));
