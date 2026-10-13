@@ -46,6 +46,7 @@ public final class IntercomService extends Service {
     private AudioFocusRequest focus;
     private boolean hasFocus, joined, connected, talking, initialized, headsetCalls;
     private float receiveGain = 2f;
+    private volatile float microphoneGain=1f;
     private String headsetStatus = "S10：ボタン操作OFF";
     private String room = "", userName = "", status = "未参加", route = "音声出力：未接続";
     private MediaSession mediaSession;
@@ -62,6 +63,8 @@ public final class IntercomService extends Service {
     String getHeadsetStatus() { return headsetStatus; }
     boolean usesHeadsetCalls() { return headsetCalls; }
     float getReceiveGain() { return receiveGain; }
+    float getMicrophoneGain(){return microphoneGain;}
+    void setMicrophoneGain(float value){microphoneGain=MicrophoneGain.normalize(value);getSharedPreferences("intercom",MODE_PRIVATE).edit().putFloat("microphoneGain",microphoneGain).apply();}
     void setReceiveGain(float value) {
         receiveGain = normalizeReceiveGain(value);
         getSharedPreferences("intercom", MODE_PRIVATE).edit().putFloat("receiveGain", receiveGain).apply();
@@ -93,6 +96,7 @@ public final class IntercomService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        microphoneGain=MicrophoneGain.normalize(getSharedPreferences("intercom",MODE_PRIVATE).getFloat("microphoneGain",1f));
         receiveGain = normalizeReceiveGain(getSharedPreferences("intercom", MODE_PRIVATE).getFloat("receiveGain", 2f));
         audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL, "インカム通話", NotificationManager.IMPORTANCE_LOW));
@@ -173,7 +177,11 @@ public final class IntercomService extends Service {
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this).createInitializationOptions());
         // Native ICE logs can include temporary credentials and connection addresses.
         Logging.enableLogToDebugOutput(Logging.Severity.LS_NONE);
-        audioModule = JavaAudioDeviceModule.builder(this).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(false).createAudioDeviceModule();
+        audioModule = JavaAudioDeviceModule.builder(this).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(false)
+            .setAudioBufferCallback((buffer,format,channels,rate,bytesRead,captureTimeNs)->{
+                if(format==android.media.AudioFormat.ENCODING_PCM_16BIT)MicrophoneGain.apply(buffer,bytesRead,microphoneGain);
+                return captureTimeNs;
+            }).createAudioDeviceModule();
         factory = PeerConnectionFactory.builder().setAudioDeviceModule(audioModule).createPeerConnectionFactory();
         source = factory.createAudioSource(new MediaConstraints());
         track = factory.createAudioTrack("intercom-audio", source); track.setEnabled(false); initialized = true;

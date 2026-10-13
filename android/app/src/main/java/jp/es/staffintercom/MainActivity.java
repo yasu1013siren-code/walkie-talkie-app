@@ -20,6 +20,7 @@ public final class MainActivity extends Activity {
     private View halo;
     private static final int BG=0xff0b1025, CARD=0xff1b2540, BORDER=0xff3d4a69, INK=0xfff8f4ff, MUTED=0xffb6bfd8, ACCENT=0xff98edf6, STOP=0xffffb6be;
     private SeekBar gainControl;
+    private TextView microphoneLabel;
     private CheckBox headsetMode;
     private Button join, leave, latch, ptt;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -90,6 +91,13 @@ public final class MainActivity extends Activity {
             if(!headsetMode.isChecked())headsetMode.setChecked(true);else service.setHeadsetCalls(true);service.selectAudioRoute();render();
         });secondary(register);addMargin(register,8);
         headsetState=text("",12,MUTED);add(settings,headsetState,10);
+        microphoneLabel=text("",14,INK);add(settings,microphoneLabel,22);
+        SeekBar microphoneControl=new SeekBar(this);microphoneControl.setMax(6);microphoneControl.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffbca8ff));microphoneControl.setThumbTintList(android.content.res.ColorStateList.valueOf(0xffbca8ff));
+        float savedMicrophone=MicrophoneGain.normalize(prefs.getFloat("microphoneGain",1f));microphoneControl.setProgress(Math.round((savedMicrophone-1f)*2));microphoneLabel.setText("送信マイクの増幅  "+savedMicrophone+"倍");
+        microphoneControl.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){float gain=1f+progress*.5f;microphoneLabel.setText("送信マイクの増幅  "+gain+"倍");if(fromUser){prefs.edit().putFloat("microphoneGain",gain).apply();if(service!=null)service.setMicrophoneGain(gain);}}
+            public void onStartTrackingTouch(SeekBar bar){}public void onStopTrackingTouch(SeekBar bar){}
+        });add(settings,microphoneControl,8);add(settings,text("まず1.5〜2倍で確認。音が割れる場合は下げてください。",11,MUTED),4);
         gainLabel=text("",14,INK);add(settings,gainLabel,22);
         gainControl=new SeekBar(this);gainControl.setMax(4);gainControl.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));gainControl.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));
         float savedGain=IntercomService.normalizeReceiveGain(prefs.getFloat("receiveGain",2f));gainControl.setProgress(Math.round((savedGain-1f)*2));gainLabel.setText("受信音量  "+savedGain+"倍");
