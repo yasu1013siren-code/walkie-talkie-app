@@ -17,7 +17,8 @@ public final class MainActivity extends Activity {
     private TextView status, route, headsetState, gainLabel, stateChip, talkHint;
     private LinearLayout settings;
     private boolean previousTalking, touchClick;
-    private static final int BG=0xff0d1411, CARD=0xff17231c, BORDER=0xff2c3c32, INK=0xfff0f5ed, MUTED=0xffa7b6ab, ACCENT=0xffd8ffbc, STOP=0xffffb49e;
+    private View halo;
+    private static final int BG=0xff0b1025, CARD=0xff1b2540, BORDER=0xff3d4a69, INK=0xfff8f4ff, MUTED=0xffb6bfd8, ACCENT=0xff98edf6, STOP=0xffffb6be;
     private SeekBar gainControl;
     private CheckBox headsetMode;
     private Button join, leave, latch, ptt;
@@ -36,21 +37,21 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         android.content.SharedPreferences prefs=getSharedPreferences("intercom",MODE_PRIVATE);
-        LinearLayout root=column();root.setPadding(dp(24),dp(26),dp(24),dp(28));root.setBackgroundColor(BG);
+        LinearLayout root=column();root.setPadding(dp(24),dp(26),dp(24),dp(28));root.setBackground(new IntercomArtwork(IntercomArtwork.AMBIENT,false));
         LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView brand=text("INCOM",28,INK);brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));brand.setLetterSpacing(.12f);
+        TextView brand=text("INCOM",34,INK);brand.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));brand.setLetterSpacing(.1f);brand.getPaint().setShader(new android.graphics.LinearGradient(0,0,dp(160),dp(25),new int[]{0xfff4efff,0xffbba5ff,0xff91edfa},null,android.graphics.Shader.TileMode.CLAMP));
         header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
-        TextView personal=text("PERSONAL",10,ACCENT);personal.setLetterSpacing(.15f);personal.setPadding(dp(12),dp(8),dp(12),dp(8));personal.setBackground(surface(CARD,20,BORDER));header.addView(personal);root.addView(header);
-        TextView caption=text("声でつながる、いつもの場所。",13,MUTED);add(root,caption,8);
-        LinearLayout session=card();add(root,session,24);
+        TextView personal=text("PERSONAL",10,ACCENT);personal.setLetterSpacing(.15f);personal.setPadding(dp(12),dp(8),dp(12),dp(8));personal.setBackground(gradient(0xff3c2b61,0xff1b384b,20,0xff6a6296));header.addView(personal);root.addView(header);
+        TextView caption=text("あなたの声を、もっと近くに。",14,MUTED);add(root,caption,8);
+        LinearLayout session=card();session.setBackground(gradient(0xff342557,0xff183b50,20,0xff625988));add(root,session,24);
         stateChip=text("●  未接続",12,ACCENT);session.addView(stateChip);
         status=text("接続を準備しています",20,INK);status.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));add(session,status,10);
         TextView background=text("画面を消しても、受信を続けます",12,MUTED);add(session,background,8);
-        TextView section=text("PUSH TO TALK",11,MUTED);section.setLetterSpacing(.18f);section.setGravity(Gravity.CENTER);add(root,section,28);
-        FrameLayout disc=new FrameLayout(this);LinearLayout.LayoutParams discLayout=new LinearLayout.LayoutParams(-1,dp(240));discLayout.topMargin=dp(12);root.addView(disc,discLayout);
-        View halo=new View(this);halo.setBackground(surface(CARD,120,BORDER));FrameLayout.LayoutParams haloLayout=new FrameLayout.LayoutParams(dp(236),dp(236),Gravity.CENTER);disc.addView(halo,haloLayout);
-        ptt=new Button(this);ptt.setAllCaps(false);ptt.setTextSize(17);ptt.setTextColor(ACCENT);ptt.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));ptt.setPadding(dp(12),dp(48),dp(12),dp(36));
-        ptt.setCompoundDrawablesWithIntrinsicBounds(0,R.drawable.ic_mic,0,0);ptt.setCompoundDrawablePadding(dp(18));ptt.setBackground(touchSurface(0xff213c2a,108,0xff62835c));
+        TextView section=text("PUSH TO TALK",11,MUTED);section.setLetterSpacing(.18f);section.setGravity(Gravity.CENTER);add(root,section,22);
+        FrameLayout disc=new FrameLayout(this);LinearLayout.LayoutParams discLayout=new LinearLayout.LayoutParams(-1,dp(264));discLayout.topMargin=dp(12);root.addView(disc,discLayout);
+        halo=new View(this);halo.setBackground(new IntercomArtwork(IntercomArtwork.HALO,false));FrameLayout.LayoutParams haloLayout=new FrameLayout.LayoutParams(dp(260),dp(260),Gravity.CENTER);disc.addView(halo,haloLayout);
+        ptt=new Button(this);ptt.setAllCaps(false);ptt.setTextSize(17);ptt.setTextColor(INK);ptt.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));ptt.setPadding(dp(12),dp(48),dp(12),dp(36));
+        ptt.setCompoundDrawablesWithIntrinsicBounds(0,R.drawable.ic_mic,0,0);ptt.setCompoundDrawablePadding(dp(18));ptt.setBackground(dial(false));
         ptt.setContentDescription("押している間だけ送信。指を離すと停止");disc.addView(ptt,new FrameLayout.LayoutParams(dp(212),dp(212),Gravity.CENTER));
         ptt.setOnTouchListener((v,event)->{
             if(service==null || !ptt.isEnabled())return false;
@@ -62,10 +63,12 @@ public final class MainActivity extends Activity {
         });
         // An accessibility click has no sustained press, so it uses the same safe toggle as the latch.
         ptt.setOnClickListener(v->{if(!touchClick && service!=null && ptt.isEnabled())service.toggleTalking();render();});
+        View wave=new View(this);wave.setBackground(new IntercomArtwork(IntercomArtwork.WAVE,false));wave.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams waveLayout=new LinearLayout.LayoutParams(dp(98),dp(18));waveLayout.gravity=Gravity.CENTER_HORIZONTAL;waveLayout.topMargin=dp(2);root.addView(wave,waveLayout);
         talkHint=text("ボタンを押している間だけ送信",12,MUTED);talkHint.setGravity(Gravity.CENTER);add(root,talkHint,12);
         latch=button(root,"送信を開始",v->{if(service!=null)service.toggleTalking();render();});addMargin(latch,20);
         TextView latchHint=text("連続して話すときは、もう一度押すと停止",11,MUTED);latchHint.setGravity(Gravity.CENTER);add(root,latchHint,8);
-        LinearLayout audioCard=card();add(root,audioCard,24);audioCard.addView(text("AUDIO DEVICE",10,MUTED));
+        LinearLayout audioCard=card();audioCard.setBackground(gradient(0xff19374b,0xff282740,20,0xff425976));add(root,audioCard,24);audioCard.addView(text("AUDIO DEVICE",10,MUTED));
         route=text("音声出力：未接続",15,INK);add(audioCard,route,10);
         Button reconnect=button(audioCard,"Bluetooth接続を再確認",v->{if(service!=null)service.selectAudioRoute();render();});secondary(reconnect);addMargin(reconnect,12);
         LinearLayout actions=new LinearLayout(this);add(root,actions,12);
@@ -110,9 +113,12 @@ public final class MainActivity extends Activity {
     private TextView text(String value,int size,int color){TextView view=new TextView(this);view.setText(value);view.setTextSize(size);view.setTextColor(color);return view;}
     private android.graphics.drawable.GradientDrawable surface(int color,int radius,int stroke){android.graphics.drawable.GradientDrawable drawable=new android.graphics.drawable.GradientDrawable();drawable.setColor(color);drawable.setCornerRadius(dp(radius));drawable.setStroke(dp(1),stroke);return drawable;}
     private android.graphics.drawable.Drawable touchSurface(int color,int radius,int stroke){return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x225fffff),surface(color,radius,stroke),surface(-1,radius,-1));}
+    private android.graphics.drawable.GradientDrawable gradient(int first,int last,int radius,int stroke){android.graphics.drawable.GradientDrawable view=new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR,new int[]{first,last});view.setCornerRadius(dp(radius));view.setStroke(dp(1),stroke);return view;}
+    private android.graphics.drawable.Drawable primary(boolean active){return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33ffffff),gradient(active?0xffffcab0:0xffa69fff,active?0xffff9fc0:0xff8debf6,14,active?0xffffc6d7:0xffced8ff),surface(-1,14,-1));}
+    private android.graphics.drawable.Drawable dial(boolean active){return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new IntercomArtwork(IntercomArtwork.DIAL,active),surface(-1,108,-1));}
     private void add(LinearLayout parent,View child,int margin){LinearLayout.LayoutParams layout=new LinearLayout.LayoutParams(-1,-2);layout.topMargin=dp(margin);parent.addView(child,layout);}
     private void addMargin(View view,int margin){LinearLayout.LayoutParams layout=(LinearLayout.LayoutParams)view.getLayoutParams();layout.topMargin=dp(margin);view.setLayoutParams(layout);}
-    private void styleButton(Button button){button.setAllCaps(false);button.setTextSize(14);button.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));button.setPadding(dp(10),dp(8),dp(10),dp(8));button.setMinHeight(dp(52));button.setTextColor(BG);button.setBackground(touchSurface(ACCENT,14,ACCENT));}
+    private void styleButton(Button button){button.setAllCaps(false);button.setTextSize(14);button.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));button.setPadding(dp(10),dp(8),dp(10),dp(8));button.setMinHeight(dp(52));button.setTextColor(BG);button.setBackground(primary(false));}
     private void secondary(Button button){button.setTextColor(INK);button.setBackground(touchSurface(CARD,14,BORDER));}
     private Button button(LinearLayout root,String text,View.OnClickListener click){Button button=new Button(this);styleButton(button);button.setText(text);if(click!=null)button.setOnClickListener(click);root.addView(button,new LinearLayout.LayoutParams(-1,-2));return button;}
     private String personalInvite() {
@@ -176,7 +182,7 @@ public final class MainActivity extends Activity {
         ptt.setText(talking?"送信中":"押しながら話す");
         talkHint.setText(talking?"あなたの声を届けています":connected?"ボタンを押している間だけ送信":"接続すると送信できます");
         ptt.setAlpha(connected?1f:.45f);latch.setAlpha(connected?1f:.45f);join.setAlpha(active?.4f:1f);leave.setAlpha(active?1f:.4f);
-        if(talking!=previousTalking){latch.setBackground(touchSurface(talking?STOP:ACCENT,14,talking?STOP:ACCENT));ptt.setBackground(touchSurface(talking?0xff563a2f:0xff213c2a,108,talking?STOP:0xff62835c));previousTalking=talking;}
+        if(talking!=previousTalking){latch.setBackground(primary(talking));ptt.setBackground(dial(talking));halo.setBackground(new IntercomArtwork(IntercomArtwork.HALO,talking));previousTalking=talking;}
     }
     @Override protected void onStart() { super.onStart(); bound = bindService(new Intent(this, IntercomService.class), connection, BIND_AUTO_CREATE); handler.post(refresh); }
     @Override protected void onStop() {

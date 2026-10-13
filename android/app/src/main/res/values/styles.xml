@@ -1,12 +1,12 @@
 <resources>
     <style name="IntercomTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#D8FFBC</item>
+        <item name="android:colorAccent">#98EDF6</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <item name="android:statusBarColor">#0D1411</item>
-        <item name="android:navigationBarColor">#0D1411</item>
-        <item name="android:windowBackground">#0D1411</item>
+        <item name="android:statusBarColor">#0B1025</item>
+        <item name="android:navigationBarColor">#0B1025</item>
+        <item name="android:windowBackground">#0B1025</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>
