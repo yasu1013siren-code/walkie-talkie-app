@@ -11,16 +11,16 @@ final class IntercomArtwork extends Drawable {
     @Override public void draw(Canvas canvas){
         Rect b=getBounds();if(b.isEmpty())return;
         canvas.save();canvas.translate(b.left,b.top);float w=b.width(),h=b.height(),s=Math.min(w,h),x=w/2,y=h/2;
-        paint.setStyle(Paint.Style.FILL);paint.setShader(null);
+        paint.setStyle(Paint.Style.FILL);paint.setShader(null);paint.setColor(Color.WHITE);
         if(kind==AMBIENT){
             paint.setColor(0xff0b1025);canvas.drawRect(0,0,w,h,paint);
             glow(canvas,w*.08f,h*.07f,w*.9f,0x553b3d8e);
             glow(canvas,w*1.05f,h*.39f,w*.72f,0x4430b9cf);
             glow(canvas,w*.02f,h*.76f,w*.7f,0x444d277d);
         }else if(kind==HALO){
-            glow(canvas,x*.65f,y*.75f,s*.53f,transmitting?0x66ff6f9d:0x667f65f5);
-            glow(canvas,x*1.35f,y*1.12f,s*.5f,transmitting?0x55ffb486:0x5578e4f4);
-            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(s*.004f);paint.setShader(new SweepGradient(x,y,new int[]{0xff8beaf7,0xffb89bff,0xffffa8c8,0xff8beaf7},null));
+            glow(canvas,x,y,s*.49f,transmitting?0x66ff6f9d:0x667f65f5);
+            glow(canvas,x,y,s*.44f,transmitting?0x55ffb486:0x5578e4f4);
+            paint.setStyle(Paint.Style.STROKE);paint.setColor(Color.WHITE);paint.setStrokeWidth(s*.004f);paint.setShader(new SweepGradient(x,y,new int[]{0xff8beaf7,0xffb89bff,0xffffa8c8,0xff8beaf7},null));
             canvas.drawCircle(x,y,s*.44f,paint);
             paint.setShader(null);paint.setColor(0x405e75a4);paint.setStrokeWidth(s*.003f);canvas.drawCircle(x,y,s*.49f,paint);
         }else if(kind==DIAL){
